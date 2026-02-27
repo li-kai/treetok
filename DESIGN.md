@@ -170,13 +170,14 @@ HuggingFace tokenizers are ~20 MB each. V2 will download on first use to `~/.cac
 - Response: `{"input_tokens": 14}`
 - Free, but rate-limited (100–8000 RPM depending on tier)
 - No batching — one request per file
-- Requires `ANTHROPIC_API_KEY`. If missing: skip Claude with a warning in range mode, error if `-t claude` explicit.
+- Requires `TREETOK_API_KEY` or `ANTHROPIC_API_KEY` (prefers `TREETOK_API_KEY`). If missing: skip Claude with a warning in range mode, error if `-t claude` explicit.
 
 ## Environment variables
 
 | Variable | Purpose |
 |---|---|
-| `ANTHROPIC_API_KEY` | Claude tokenizer API key |
+| `TREETOK_API_KEY` | Claude tokenizer API key (preferred) |
+| `ANTHROPIC_API_KEY` | Claude tokenizer API key (fallback) |
 | `NO_COLOR` | Disable colored output (any value) |
 
 No config file in V1. Defer to V2 if needed.
