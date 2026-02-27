@@ -1,0 +1,64 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+authors = ["Treetok Contributors"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/yourusername/treetok"
+homepage = "https://github.com/yourusername/treetok"
+rust-version = "1.88"
+
+[workspace.dependencies]
+# Error handling
+miette = { version = "7", features = ["fancy"] }
+thiserror = "2.0"
+
+# CLI
+clap = { version = "4.5", features = ["derive", "cargo", "env"] }
+
+# Testing
+rstest = "0.26"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+# Groups with lower priority to allow individual overrides
+nursery = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+
+# Allowed pedantic lints (common false positives in schema-heavy code)
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+module_name_repetitions = "allow"
+missing_const_for_fn = "allow"
+similar_names = "allow"
+too_many_lines = "allow"
+cast_possible_truncation = "allow"
+cast_possible_wrap = "allow"
+cast_precision_loss = "allow"
+cast_sign_loss = "allow"
+
+# Enforced best practices
+unwrap_used = "warn"
+expect_used = "warn"
+
+# Profile configurations - only non-default settings shown
+# Reference: https://doc.rust-lang.org/cargo/guide/build-performance.html
+# Reference: https://doc.rust-lang.org/cargo/reference/profiles.html
+
+[profile.dev]
+debug = "line-tables-only"         # 2-30% faster than default (true)
+
+[profile.dev.package."*"]
+opt-level = 2                      # Better runtime perf (default is 0)
+debug = false                      # Skip debug info for dependencies
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
