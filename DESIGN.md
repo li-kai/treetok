@@ -210,6 +210,6 @@ Uses `exitcode` crate (sysexits.h conventions):
 | Directory walking | `ignore` |
 | Tree rendering | `termtree` |
 | OpenAI tokenizer | `tiktoken-rs` |
-| HTTP (Claude API) | `reqwest` |
+| HTTP (Claude API) | `ureq` |
 | Terminal colors | `owo-colors` |
 | Exit codes | `exitcode` |
