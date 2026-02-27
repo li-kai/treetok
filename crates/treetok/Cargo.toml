@@ -1,0 +1,41 @@
+[package]
+name = "treetok"
+description = "Display directory trees with LLM token counts"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "treetok"
+path = "src/lib.rs"
+
+[[bin]]
+name = "treetok"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+miette.workspace = true
+thiserror.workspace = true
+
+tokio.workspace = true
+reqwest.workspace = true
+futures.workspace = true
+ignore = "0.4"
+termtree = "0.4"
+tiktoken-rs = "0.6"
+owo-colors = "4"
+exitcode = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+rstest.workspace = true
+tempfile = "3"
+
+[lints]
+workspace = true
