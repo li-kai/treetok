@@ -211,6 +211,8 @@ Uses `exitcode` crate (sysexits.h conventions):
 | Directory walking | `ignore` |
 | Tree rendering | `termtree` |
 | OpenAI tokenizer | `tiktoken-rs` |
-| HTTP (Claude API) | `ureq` |
+| Async runtime | `tokio` |
+| HTTP (Claude API) | `reqwest` |
 | Terminal colors | `owo-colors` |
+| Error handling | `thiserror`, `miette` |
 | Exit codes | `exitcode` |
