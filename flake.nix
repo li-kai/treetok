@@ -1,6 +1,11 @@
 {
   description = "Development environment for treetok monorepo";
 
+  nixConfig = {
+    extra-substituters = [ "https://li-kai.cachix.org" ];
+    extra-trusted-public-keys = [ "li-kai.cachix.org-1:hT/YtROuqsBhfSx1YDcMrFxBbnZLoyu+WA1CnhiUgWM=" ];
+  };
+
   inputs = {
     fenix = {
       url = "github:nix-community/fenix/monthly";
