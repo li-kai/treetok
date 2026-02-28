@@ -16,6 +16,7 @@ jobs:
       - uses: cachix/install-nix-action@v27
         with:
           install_url: https://install.determinate.systems/nix
+          extra_nix_installer_flags: "--no-confirm"
       - uses: cachix/cachix-action@v15
         with:
           name: li-kai
