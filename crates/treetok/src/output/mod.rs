@@ -138,6 +138,8 @@ pub fn write_output(
         write_json(out, root_label, entries)
     } else if opts.flat {
         write_flat(out, entries, opts)
+    } else if matches!(opts.count_format, CountFormat::Named) {
+        write_tree_named(out, root_label, entries, opts)
     } else {
         write_tree(out, root_label, entries, opts)
     }
@@ -234,10 +236,6 @@ fn write_tree(
     entries: &[FileResult],
     opts: &OutputOptions,
 ) -> std::io::Result<()> {
-    if matches!(opts.count_format, CountFormat::Named) {
-        return write_tree_named(out, root_label, entries, opts);
-    }
-
     let name_col = name_col_width(entries);
     let root_display = format_dir_label(root_label, opts.color);
     let tree = build_tree_node(
