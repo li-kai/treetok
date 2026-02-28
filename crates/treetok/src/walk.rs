@@ -82,19 +82,13 @@ impl WalkErrors {
         }
         Some(Self {
             root: result.root.clone(),
-            related: result
-                .errors
-                .iter()
-                .map(|e| WalkError {
-                    message: e.message.clone(),
-                })
-                .collect(),
+            related: result.errors.clone(),
         })
     }
 }
 
 /// A non-fatal error encountered while walking a directory tree.
-#[derive(Debug, thiserror::Error, miette::Diagnostic)]
+#[derive(Clone, Debug, thiserror::Error, miette::Diagnostic)]
 #[error("{message}")]
 #[diagnostic(code(treetok::walk::entry))]
 pub struct WalkError {
