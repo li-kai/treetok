@@ -16,7 +16,7 @@ pub struct Tree<D: Display> {
     /// The label for this node.
     pub root: D,
     /// Child nodes.
-    pub leaves: Vec<Tree<D>>,
+    pub leaves: Vec<Self>,
     multiline: bool,
     glyphs: GlyphPalette,
 }
@@ -24,7 +24,7 @@ pub struct Tree<D: Display> {
 impl<D: Display> Tree<D> {
     /// Create a new tree node with no children.
     pub fn new(root: D) -> Self {
-        Tree {
+        Self {
             root,
             leaves: Vec::new(),
             multiline: false,
@@ -33,18 +33,21 @@ impl<D: Display> Tree<D> {
     }
 
     /// Builder: set the initial child nodes.
-    pub fn with_leaves(mut self, leaves: impl IntoIterator<Item = impl Into<Tree<D>>>) -> Self {
+    #[must_use]
+    pub fn with_leaves(mut self, leaves: impl IntoIterator<Item = impl Into<Self>>) -> Self {
         self.leaves = leaves.into_iter().map(Into::into).collect();
         self
     }
 
     /// Builder: ensure all lines for `root` are indented.
+    #[must_use]
     pub fn with_multiline(mut self, yes: bool) -> Self {
         self.multiline = yes;
         self
     }
 
     /// Builder: customise the rendering glyphs for this node.
+    #[must_use]
     pub fn with_glyphs(mut self, glyphs: GlyphPalette) -> Self {
         self.glyphs = glyphs;
         self
@@ -63,7 +66,7 @@ impl<D: Display> Tree<D> {
     }
 
     /// Append a child node.
-    pub fn push(&mut self, leaf: impl Into<Tree<D>>) -> &mut Self {
+    pub fn push(&mut self, leaf: impl Into<Self>) -> &mut Self {
         self.leaves.push(leaf.into());
         self
     }
@@ -86,7 +89,7 @@ impl<D: Display> Tree<D> {
         writeln!(out)?;
 
         let mut queue: RenderQueue<D> = VecDeque::new();
-        enqueue_leaves(&mut queue, self, Rc::new(Vec::new()));
+        enqueue_leaves(&mut queue, self, &Rc::new(Vec::new()));
 
         while let Some((last, leaf, spaces)) = queue.pop_front() {
             let prefix_width = (spaces.len() + 1) * 4;
@@ -96,10 +99,18 @@ impl<D: Display> Tree<D> {
                 if ancestor_was_last {
                     write!(out, "{}{}", leaf.glyphs.last_skip, leaf.glyphs.skip_indent)?;
                 } else {
-                    write!(out, "{}{}", leaf.glyphs.middle_skip, leaf.glyphs.skip_indent)?;
+                    write!(
+                        out,
+                        "{}{}",
+                        leaf.glyphs.middle_skip, leaf.glyphs.skip_indent
+                    )?;
                 }
             }
-            let connector = if last { leaf.glyphs.last_item } else { leaf.glyphs.middle_item };
+            let connector = if last {
+                leaf.glyphs.last_item
+            } else {
+                leaf.glyphs.middle_item
+            };
             write!(out, "{}{}", connector, leaf.glyphs.item_indent)?;
 
             fmt_leaf(out, prefix_width, &leaf.root)?;
@@ -108,7 +119,7 @@ impl<D: Display> Tree<D> {
             if !leaf.leaves.is_empty() {
                 let mut child_spaces = spaces.as_ref().clone();
                 child_spaces.push(last);
-                enqueue_leaves(&mut queue, leaf, Rc::new(child_spaces));
+                enqueue_leaves(&mut queue, leaf, &Rc::new(child_spaces));
             }
         }
         Ok(())
@@ -120,10 +131,10 @@ type RenderQueue<'t, D> = VecDeque<(bool, &'t Tree<D>, Rc<Vec<bool>>)>;
 fn enqueue_leaves<'t, D: Display>(
     queue: &mut RenderQueue<'t, D>,
     parent: &'t Tree<D>,
-    spaces: Rc<Vec<bool>>,
+    spaces: &Rc<Vec<bool>>,
 ) {
     for (i, leaf) in parent.leaves.iter().rev().enumerate() {
-        queue.push_front((i == 0, leaf, spaces.clone()));
+        queue.push_front((i == 0, leaf, Rc::clone(spaces)));
     }
 }
 
@@ -134,18 +145,26 @@ impl<D: Display> Display for Tree<D> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.root.fmt(f)?;
         writeln!(f)?;
-        let mut queue: VecDeque<(bool, &Tree<D>, Rc<Vec<bool>>)> = VecDeque::new();
+        let mut queue: VecDeque<(bool, &Self, Rc<Vec<bool>>)> = VecDeque::new();
         let no_space = Rc::new(Vec::new());
-        enqueue_leaves(&mut queue, self, no_space);
+        enqueue_leaves(&mut queue, self, &no_space);
         while let Some((last, leaf, spaces)) = queue.pop_front() {
             let mut prefix = (
-                if last { leaf.glyphs.last_item } else { leaf.glyphs.middle_item },
+                if last {
+                    leaf.glyphs.last_item
+                } else {
+                    leaf.glyphs.middle_item
+                },
                 leaf.glyphs.item_indent,
             );
 
             if leaf.multiline {
                 let rest_prefix = (
-                    if last { leaf.glyphs.last_skip } else { leaf.glyphs.middle_skip },
+                    if last {
+                        leaf.glyphs.last_skip
+                    } else {
+                        leaf.glyphs.middle_skip
+                    },
                     leaf.glyphs.skip_indent,
                 );
                 let root = if f.alternate() {
@@ -188,7 +207,7 @@ impl<D: Display> Display for Tree<D> {
             if !leaf.leaves.is_empty() {
                 let mut child_spaces = spaces.as_ref().clone();
                 child_spaces.push(last);
-                enqueue_leaves(&mut queue, leaf, Rc::new(child_spaces));
+                enqueue_leaves(&mut queue, leaf, &Rc::new(child_spaces));
             }
         }
         Ok(())
@@ -207,8 +226,8 @@ impl<D: Display> Extend<D> for Tree<D> {
     }
 }
 
-impl<D: Display> Extend<Tree<D>> for Tree<D> {
-    fn extend<T: IntoIterator<Item = Tree<D>>>(&mut self, iter: T) {
+impl<D: Display> Extend<Self> for Tree<D> {
+    fn extend<T: IntoIterator<Item = Self>>(&mut self, iter: T) {
         self.leaves.extend(iter);
     }
 }
@@ -234,6 +253,7 @@ pub struct GlyphPalette {
 
 impl GlyphPalette {
     /// Create the default glyph palette.
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             middle_item: "├",

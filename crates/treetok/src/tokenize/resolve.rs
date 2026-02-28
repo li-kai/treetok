@@ -1,7 +1,7 @@
+use super::TokenizerId;
 use super::error::TokenizeError;
 use super::local::{CtocTokenizer, O200kTokenizer, Tokenizer};
 use super::remote::{self, ClaudeTokenizer};
-use super::TokenizerId;
 
 /// Split tokenizer set: local (synchronous) and optional Claude (async).
 pub struct ResolvedTokenizers {
@@ -66,7 +66,7 @@ pub fn resolve_tokenizers(
                     (false, None) => return Err(TokenizeError::NoApiKey),
                 },
                 Err(()) => {
-                    eprintln!("warning: unknown tokenizer {:?}, skipping", name);
+                    eprintln!("warning: unknown tokenizer {name:?}, skipping");
                 }
             }
         }
@@ -92,8 +92,8 @@ pub fn load_api_key() -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::TokenizerId;
+    use super::*;
     use rstest::rstest;
 
     fn no_key() -> Option<String> {

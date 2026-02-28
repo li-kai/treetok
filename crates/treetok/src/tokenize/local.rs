@@ -1,7 +1,7 @@
 use aho_corasick::{AhoCorasick, MatchKind};
 
-use super::error::TokenizeError;
 use super::TokenizerId;
+use super::error::TokenizeError;
 
 /// Common interface for local (offline) token counters.
 pub trait Tokenizer {
