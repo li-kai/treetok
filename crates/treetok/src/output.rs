@@ -587,10 +587,11 @@ fn dim(s: &str, color: bool) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use rstest::rstest;
+    use rstest::{fixture, rstest};
 
-    // ── helpers ────────────────────────────────────────────────────────────
+    use super::*;
+
+    // ── fixtures and helpers ───────────────────────────────────────────────
 
     fn text_result(path: &str, counts: &[(&str, usize)]) -> FileResult {
         FileResult {
@@ -613,6 +614,24 @@ mod tests {
 
     fn opts(flat: bool, json: bool, sort: bool, count_format: CountFormat) -> OutputOptions {
         OutputOptions { flat, json, sort, color: false, count_format }
+    }
+
+    /// Flat, single-tokenizer, unsorted — the most common test configuration.
+    #[fixture]
+    fn flat_opts() -> OutputOptions {
+        opts(true, false, false, CountFormat::Single)
+    }
+
+    /// Tree, single-tokenizer, unsorted.
+    #[fixture]
+    fn tree_opts() -> OutputOptions {
+        opts(false, false, false, CountFormat::Single)
+    }
+
+    /// JSON, single-tokenizer.
+    #[fixture]
+    fn json_opts() -> OutputOptions {
+        opts(false, true, false, CountFormat::Single)
     }
 
     fn run(root: &str, entries: &[FileResult], o: &OutputOptions) -> String {
@@ -640,26 +659,26 @@ mod tests {
 
     // ── flat mode ──────────────────────────────────────────────────────────
 
-    #[test]
-    fn flat_shows_filename_and_count() {
+    #[rstest]
+    fn flat_shows_filename_and_count(flat_opts: OutputOptions) {
         let entries = [text_result("src/main.rs", &[("o200k", 1_234)])];
-        let s = run(".", &entries, &opts(true, false, false, CountFormat::Single));
+        let s = run(".", &entries, &flat_opts);
         assert!(s.contains("src/main.rs"), "path missing:\n{s}");
         assert!(s.contains("1,234"), "count missing:\n{s}");
     }
 
-    #[test]
-    fn flat_includes_total_line() {
+    #[rstest]
+    fn flat_includes_total_line(flat_opts: OutputOptions) {
         let entries = [text_result("a.rs", &[("o200k", 100)])];
-        let s = run(".", &entries, &opts(true, false, false, CountFormat::Single));
+        let s = run(".", &entries, &flat_opts);
         assert!(s.contains("Total:"), "total line missing:\n{s}");
         assert!(s.contains("100"), "total count missing:\n{s}");
     }
 
-    #[test]
-    fn flat_binary_file_shows_label() {
+    #[rstest]
+    fn flat_binary_file_shows_label(flat_opts: OutputOptions) {
         let entries = [binary_result("image.png")];
-        let s = run(".", &entries, &opts(true, false, false, CountFormat::Single));
+        let s = run(".", &entries, &flat_opts);
         assert!(s.contains("[binary]"), "[binary] label missing:\n{s}");
         assert!(!s.contains("Total:"), "unexpected Total line:\n{s}");
     }
@@ -702,6 +721,7 @@ mod tests {
 
     #[test]
     fn flat_named_columns_are_right_aligned() {
+        // "1,234" is wider than "42"; the narrower value should gain leading spaces.
         let entries = [
             text_result("a.rs", &[("tok", 42)]),
             text_result("b.rs", &[("tok", 1_234)]),
@@ -710,13 +730,13 @@ mod tests {
         assert!(s.contains("   42") || s.contains("  42"), "right-align missing:\n{s}");
     }
 
-    // ── range vs named mode ────────────────────────────────────────────────
+    // ── range mode ─────────────────────────────────────────────────────────
 
     #[test]
     fn range_mode_shows_en_dash_range() {
         let entries = [text_result("f.rs", &[("o200k", 100), ("claude", 120)])];
         let s = run(".", &entries, &opts(true, false, false, CountFormat::Range));
-        assert!(s.contains('–'), "en-dash missing in range mode:\n{s}");
+        assert!(s.contains('–'), "en-dash missing:\n{s}");
         assert!(s.contains("100"), "min missing:\n{s}");
         assert!(s.contains("120"), "max missing:\n{s}");
         assert!(!s.contains('~'), "unexpected tilde for exact counts:\n{s}");
@@ -751,53 +771,22 @@ mod tests {
         assert!(s.contains("~127"), "tilde+max missing:\n{s}");
     }
 
-    #[test]
-    fn single_tokenizer_no_range_dash() {
+    #[rstest]
+    fn single_tokenizer_no_range_dash(flat_opts: OutputOptions) {
         let entries = [text_result("f.rs", &[("o200k", 42)])];
-        let s = run(".", &entries, &opts(true, false, false, CountFormat::Single));
+        let s = run(".", &entries, &flat_opts);
         assert!(!s.contains('–'), "unexpected en-dash:\n{s}");
         assert!(s.contains("42"), "count missing:\n{s}");
     }
 
-    // ── from_approx ────────────────────────────────────────────────────────
-
     #[rstest]
-    #[case(1000, 957, 1043)]
-    #[case(200,  189, 211)]
-    #[case(100,   93, 107)]
-    fn from_approx_large(#[case] count: usize, #[case] lo: usize, #[case] hi: usize) {
-        let TokenCount::Approx { lo: got_lo, hi: got_hi } = TokenCount::from_approx(count) else {
-            panic!("expected Approx for count={count}");
-        };
-        assert_eq!(got_lo, lo, "lo mismatch for count={count}");
-        assert_eq!(got_hi, hi, "hi mismatch for count={count}");
-    }
-
-    #[rstest]
-    #[case(10,  7, 13)]
-    #[case(5,   2,  8)]
-    #[case(1,   0,  4)]
-    #[case(0,   0,  2)]
-    fn from_approx_small_uses_floor(#[case] count: usize, #[case] lo: usize, #[case] hi: usize) {
-        let TokenCount::Approx { lo: got_lo, hi: got_hi } = TokenCount::from_approx(count) else {
-            panic!("expected Approx for count={count}");
-        };
-        assert_eq!(got_lo, lo, "lo mismatch for count={count}");
-        assert_eq!(got_hi, hi, "hi mismatch for count={count}");
-        assert!(
-            got_hi - got_lo >= 4 || count == 0,
-            "band too narrow ({got_lo}–{got_hi}) for count={count}",
-        );
-    }
-
-    #[test]
-    fn approx_count_shows_range() {
+    fn approx_count_shows_range(flat_opts: OutputOptions) {
         let entry = FileResult {
             rel_path: "f.rs".into(),
             kind: crate::walk::FileKind::Text,
             tokens: [("ctoc".to_string(), TokenCount::from_approx(1000))].into(),
         };
-        let s = run(".", &[entry], &opts(true, false, false, CountFormat::Single));
+        let s = run(".", &[entry], &flat_opts);
         assert!(s.contains('–'), "en-dash missing for approx range:\n{s}");
         assert!(s.contains("957"), "lo bound missing:\n{s}");
         assert!(s.contains("1,043"), "hi bound missing:\n{s}");
@@ -811,40 +800,60 @@ mod tests {
         assert!(s.contains("O200K") || s.contains("o200k"), "label missing:\n{s}");
     }
 
-    // ── tree mode ──────────────────────────────────────────────────────────
+    // ── from_approx ────────────────────────────────────────────────────────
 
-    #[test]
-    fn tree_shows_root_label() {
-        let entries = [text_result("main.rs", &[("o200k", 10)])];
-        let s = run("src/", &entries, &opts(false, false, false, CountFormat::Single));
-        assert!(s.contains("src/"), "root label missing:\n{s}");
+    #[rstest]
+    // Large: percentage band dominates
+    #[case(1000, 957, 1043)]
+    #[case(200,  189, 211)]
+    #[case(100,   93, 107)]
+    // Small: absolute ±2 floor keeps band ≥ 4 tokens wide
+    #[case(10,    7,  13)]
+    #[case(5,     2,   8)]
+    #[case(1,     0,   4)]
+    #[case(0,     0,   2)]
+    fn from_approx_bounds(#[case] count: usize, #[case] lo: usize, #[case] hi: usize) {
+        let TokenCount::Approx { lo: got_lo, hi: got_hi } = TokenCount::from_approx(count) else {
+            panic!("expected Approx for count={count}");
+        };
+        assert_eq!(got_lo, lo, "lo mismatch for count={count}");
+        assert_eq!(got_hi, hi, "hi mismatch for count={count}");
+        assert!(
+            got_hi - got_lo >= 4 || count == 0,
+            "band too narrow ({got_lo}–{got_hi}) for count={count}",
+        );
     }
 
-    #[test]
-    fn tree_shows_filename() {
+    // ── tree mode ──────────────────────────────────────────────────────────
+
+    #[rstest]
+    fn tree_shows_root_and_filename(tree_opts: OutputOptions) {
         let entries = [text_result("main.rs", &[("o200k", 10)])];
-        let s = run("src/", &entries, &opts(false, false, false, CountFormat::Single));
+        let s = run("src/", &entries, &tree_opts);
+        assert!(s.contains("src/"), "root label missing:\n{s}");
         assert!(s.contains("main.rs"), "filename missing:\n{s}");
     }
 
-    #[test]
-    fn tree_shows_total() {
+    #[rstest]
+    fn tree_shows_total(tree_opts: OutputOptions) {
         let entries = [
             text_result("a.rs", &[("o200k", 50)]),
             text_result("b.rs", &[("o200k", 50)]),
         ];
-        let s = run(".", &entries, &opts(false, false, false, CountFormat::Single));
+        let s = run(".", &entries, &tree_opts);
         assert!(s.contains("Total:"), "total line missing:\n{s}");
         assert!(s.contains("100"), "total count missing:\n{s}");
     }
 
-    #[test]
-    fn tree_counts_aligned_across_depths() {
+    #[rstest]
+    fn tree_counts_aligned_across_depths(tree_opts: OutputOptions) {
         let entries = [
             text_result("top.rs", &[("o200k", 1_000)]),
             text_result("sub/deep.rs", &[("o200k", 999)]),
         ];
-        let s = run(".", &entries, &opts(false, false, false, CountFormat::Single));
+        let s = run(".", &entries, &tree_opts);
+        // Use char count, not byte offset: box-drawing glyphs (│ └ ─) are
+        // each 3 bytes but 1 display column.
         let bracket_cols: Vec<usize> = s
             .lines()
             .filter(|l| l.contains(".rs"))
@@ -856,13 +865,13 @@ mod tests {
 
     // ── JSON mode ──────────────────────────────────────────────────────────
 
-    #[test]
-    fn json_is_valid_and_has_expected_structure() {
+    #[rstest]
+    fn json_is_valid_and_has_expected_structure(json_opts: OutputOptions) {
         let entries = [
             text_result("foo.rs", &[("o200k", 42)]),
             binary_result("data.bin"),
         ];
-        let s = run("src/", &entries, &opts(false, true, false, CountFormat::Single));
+        let s = run("src/", &entries, &json_opts);
         let v: serde_json::Value = serde_json::from_str(&s).expect("not valid JSON");
         assert_eq!(v["root"], "src/");
         assert_eq!(v["files"].as_array().unwrap().len(), 2);
@@ -871,14 +880,14 @@ mod tests {
         assert_eq!(v["total"]["o200k"], 42);
     }
 
-    #[test]
-    fn json_too_large_has_skipped_field() {
+    #[rstest]
+    fn json_too_large_has_skipped_field(json_opts: OutputOptions) {
         let entries = [FileResult {
             rel_path: "huge.dat".into(),
             kind: crate::walk::FileKind::TooLarge,
             tokens: BTreeMap::new(),
         }];
-        let s = run(".", &entries, &opts(false, true, false, CountFormat::Single));
+        let s = run(".", &entries, &json_opts);
         let v: serde_json::Value = serde_json::from_str(&s).expect("not valid JSON");
         assert_eq!(v["files"][0]["skipped"], "too large");
     }
