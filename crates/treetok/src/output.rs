@@ -439,10 +439,18 @@ fn format_counts(counts: &BTreeMap<String, TokenCount>, format: &CountFormat) ->
         CountFormat::Range => {
             let min = counts.values().map(TokenCount::lo).min().unwrap_or(0);
             let max = counts.values().map(TokenCount::hi).max().unwrap_or(0);
+            let approx = counts
+                .values()
+                .any(|tc| matches!(tc, TokenCount::Approx { .. }));
+            let tilde = if approx { "~" } else { "" };
             if min == max {
-                format_number(min)
+                format!("{tilde}{}", format_number(min))
             } else {
-                format!("{} \u{2013} {}", format_number(min), format_number(max))
+                format!(
+                    "{} \u{2013} {tilde}{}",
+                    format_number(min),
+                    format_number(max)
+                )
             }
         }
     }
@@ -588,7 +596,7 @@ mod tests {
 
     // ── range vs named mode ────────────────────────────────────────────────
 
-    /// Two tokenizers with different counts → "min – max" format.
+    /// Two exact tokenizers with different counts → "min – max" format, no tilde.
     #[test]
     fn range_mode_shows_en_dash_range() {
         let entries = [text_result("f.rs", &[("o200k", 100), ("claude", 120)])];
@@ -596,6 +604,42 @@ mod tests {
         assert!(s.contains('–'), "en-dash missing in range mode:\n{s}");
         assert!(s.contains("100"), "min missing:\n{s}");
         assert!(s.contains("120"), "max missing:\n{s}");
+        assert!(!s.contains('~'), "unexpected tilde for exact counts:\n{s}");
+    }
+
+    /// Approximate tokenizer in Range mode → tilde prefixes the max value.
+    #[test]
+    fn range_mode_approx_shows_tilde_on_max() {
+        // from_approx(1000) → lo=957, hi=1,043
+        let entry = FileResult {
+            rel_path: "f.rs".into(),
+            kind: crate::walk::FileKind::Text,
+            tokens: [("ctoc".to_string(), TokenCount::from_approx(1000))].into(),
+        };
+        let s = run(".", &[entry], &opts(true, false, false, CountFormat::Range));
+        assert!(s.contains("957"), "lo bound missing:\n{s}");
+        assert!(s.contains("~1,043"), "tilde+hi bound missing:\n{s}");
+        assert!(s.contains('–'), "en-dash missing:\n{s}");
+    }
+
+    /// Mixed exact + approx in Range mode → tilde on max, exact min unchanged.
+    #[test]
+    fn range_mode_mixed_exact_and_approx_shows_tilde() {
+        // exact o200k: 100 (lo=100, hi=100)
+        // approx ctoc from_approx(120) → lo=113, hi=127
+        // Range: min=100, max=127, approx=true → "100 – ~127"
+        let entry = FileResult {
+            rel_path: "f.rs".into(),
+            kind: crate::walk::FileKind::Text,
+            tokens: [
+                ("ctoc".to_string(), TokenCount::from_approx(120)),
+                ("o200k".to_string(), TokenCount::Exact(100)),
+            ]
+            .into(),
+        };
+        let s = run(".", &[entry], &opts(true, false, false, CountFormat::Range));
+        assert!(s.contains("100"), "min missing:\n{s}");
+        assert!(s.contains("~127"), "tilde+max missing:\n{s}");
     }
 
     /// Single tokenizer → no dash, just the number.
