@@ -610,7 +610,42 @@ mod tests {
         assert!(s.contains("42"), "count missing:\n{s}");
     }
 
-    /// Approximate (ctoc) count shows as a lo–hi range.
+    // ── from_approx ────────────────────────────────────────────────────────
+
+    /// Large count: percentage band dominates; floor has no effect.
+    #[rstest]
+    #[case(1000, 957, 1043)]  // 0.959×1000−2=957, ceil(1.041×1000)+2=1043
+    #[case(200,  189,  211)]  // 200*959/1000−2=189, (200*1041+999)/1000+2=211
+    #[case(100,   93,  107)]  // 100*959/1000−2=93,  (100*1041+999)/1000+2=107
+    fn from_approx_large(#[case] count: usize, #[case] lo: usize, #[case] hi: usize) {
+        match TokenCount::from_approx(count) {
+            TokenCount::Approx { lo: got_lo, hi: got_hi } => {
+                assert_eq!(got_lo, lo, "lo mismatch for count={count}");
+                assert_eq!(got_hi, hi, "hi mismatch for count={count}");
+            }
+            other => panic!("expected Approx, got Exact for count={count}: {other:?}"),
+        }
+    }
+
+    /// Small count: absolute floor kicks in, range stays at least 4 tokens wide.
+    #[rstest]
+    #[case(10, 7,  13)]   // 10*959/1000−2=9−2=7, (10*1041+999)/1000+2=11+2=13
+    #[case(5,  2,  8)]    // 5*959/1000−2=4−2=2,  (5*1041+999)/1000+2=6+2=8
+    #[case(1,  0,  4)]    // 1*959/1000=0 saturates→0, (1*1041+999)/1000+2=2+2=4
+    #[case(0,  0,  2)]    // 0 − 2 saturates → 0; (0+999)/1000+2=0+2=2
+    fn from_approx_small_uses_floor(#[case] count: usize, #[case] lo: usize, #[case] hi: usize) {
+        match TokenCount::from_approx(count) {
+            TokenCount::Approx { lo: got_lo, hi: got_hi } => {
+                assert_eq!(got_lo, lo, "lo mismatch for count={count}");
+                assert_eq!(got_hi, hi, "hi mismatch for count={count}");
+                assert!(got_hi - got_lo >= 4 || count == 0 || count == 1,
+                    "band too narrow ({got_lo}–{got_hi}) for count={count}");
+            }
+            other => panic!("expected Approx, got Exact: {other:?}"),
+        }
+    }
+
+    /// Approximate (ctoc) count shows as a lo–hi range in rendered output.
     #[test]
     fn approx_count_shows_range() {
         let entry = FileResult {
