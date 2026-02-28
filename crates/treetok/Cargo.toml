@@ -25,6 +25,7 @@ thiserror.workspace = true
 tokio.workspace = true
 reqwest.workspace = true
 futures.workspace = true
+aho-corasick = "1"
 ignore = "0.4"
 termtree = "0.4"
 tiktoken-rs = "0.6"

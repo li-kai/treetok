@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use aho_corasick::{AhoCorasick, MatchKind};
 
 use super::error::TokenizeError;
 
@@ -53,8 +53,7 @@ static CTOC_VOCAB: &[u8] = include_bytes!("ctoc_vocab.bin");
 /// The vocabulary is embedded at compile time; use `cargo xtask update-ctoc`
 /// (or `just update-ctoc`) to refresh it from the upstream source.
 pub struct CtocTokenizer {
-    vocab: HashSet<Vec<u8>>,
-    max_len: usize,
+    ac: AhoCorasick,
 }
 
 impl Default for CtocTokenizer {
@@ -67,8 +66,7 @@ impl CtocTokenizer {
     /// Build the tokenizer from the embedded vocab.
     #[must_use]
     pub fn new() -> Self {
-        let mut vocab = HashSet::new();
-        let mut max_len = 0usize;
+        let mut patterns = Vec::new();
         let data = CTOC_VOCAB;
         let mut pos = 0;
         while pos + 2 <= data.len() {
@@ -77,11 +75,16 @@ impl CtocTokenizer {
             if pos + len > data.len() {
                 break;
             }
-            max_len = max_len.max(len);
-            vocab.insert(data[pos..pos + len].to_vec());
+            patterns.push(data[pos..pos + len].to_vec());
             pos += len;
         }
-        Self { vocab, max_len }
+        // The patterns come from a compile-time-embedded vocab; building cannot fail.
+        #[allow(clippy::expect_used)]
+        let ac = AhoCorasick::builder()
+            .match_kind(MatchKind::LeftmostLongest)
+            .build(&patterns)
+            .expect("aho-corasick build from embedded vocab");
+        Self { ac }
     }
 }
 
@@ -96,22 +99,17 @@ impl Tokenizer for CtocTokenizer {
 
     fn count_tokens(&self, text: &str) -> Result<usize, TokenizeError> {
         let bytes = text.as_bytes();
-        let n = bytes.len();
-        let mut dp = vec![usize::MAX; n + 1];
-        dp[0] = 0;
-        for i in 0..n {
-            if dp[i] == usize::MAX {
-                continue;
-            }
-            let end = (i + self.max_len).min(n);
-            for len in 1..=(end - i) {
-                if self.vocab.contains(&bytes[i..i + len]) {
-                    dp[i + len] = dp[i + len].min(dp[i] + 1);
-                }
-            }
-            // unknown byte fallback
-            dp[i + 1] = dp[i + 1].min(dp[i] + 1);
+        let mut tokens = 0usize;
+        let mut prev_end = 0usize;
+        for mat in self.ac.find_iter(bytes) {
+            // Each gap byte between matches counts as one token.
+            tokens += mat.start() - prev_end;
+            // The match itself is one token.
+            tokens += 1;
+            prev_end = mat.end();
         }
-        Ok(dp[n])
+        // Trailing unmatched bytes each count as one token.
+        tokens += bytes.len() - prev_end;
+        Ok(tokens)
     }
 }
