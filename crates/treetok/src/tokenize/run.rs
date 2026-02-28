@@ -5,6 +5,7 @@ use futures::stream::{self, StreamExt};
 
 use super::remote::ClaudeTokenizer;
 use super::resolve::ResolvedTokenizers;
+use crate::output::TokenCount;
 use crate::walk::FileKind;
 
 /// Tokenize a slice of file entries and return results.
@@ -29,12 +30,17 @@ pub fn tokenize_entries(
                 }
                 FileKind::Text => {
                     let content = entry.content.as_deref().unwrap_or("");
-                    let mut counts = BTreeMap::new();
+                    let mut counts: BTreeMap<String, TokenCount> = BTreeMap::new();
 
                     for tok in &tokenizers.local {
                         match tok.count_tokens(content) {
                             Ok(n) => {
-                                counts.insert(tok.name().to_string(), n);
+                                let tc = if tok.is_approximate() {
+                                    TokenCount::from_approx(n)
+                                } else {
+                                    TokenCount::Exact(n)
+                                };
+                                counts.insert(tok.name().to_string(), tc);
                             }
                             Err(e) => {
                                 eprintln!(
@@ -102,7 +108,7 @@ async fn claude_tokenize_all(
     for (idx, result) in counts {
         match result {
             Ok(n) => {
-                results[idx].tokens.insert("claude".to_string(), n);
+                results[idx].tokens.insert("claude".to_string(), TokenCount::Exact(n));
             }
             Err(e) => {
                 eprintln!("warning: {} [claude]: {e}", entries[idx].path.display());

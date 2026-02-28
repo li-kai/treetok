@@ -59,6 +59,57 @@ impl OutputOptions {
     }
 }
 
+/// A token count that is either exact or an approximate range.
+#[derive(Clone)]
+pub enum TokenCount {
+    /// A precise count from an exact tokenizer.
+    Exact(usize),
+    /// A [lo, hi] inclusive range from an approximate tokenizer (e.g. ctoc ±5 %).
+    Approx {
+        /// Lower bound of the estimated range.
+        lo: usize,
+        /// Upper bound of the estimated range.
+        hi: usize,
+    },
+}
+
+impl TokenCount {
+    /// The lower bound (or exact value).
+    fn lo(&self) -> usize {
+        match self {
+            Self::Exact(n) | Self::Approx { lo: n, .. } => *n,
+        }
+    }
+
+    /// The upper bound (or exact value).
+    fn hi(&self) -> usize {
+        match self {
+            Self::Exact(n) | Self::Approx { hi: n, .. } => *n,
+        }
+    }
+
+    /// Construct an approximate range for a raw count using ±5 %.
+    ///
+    /// `lo = floor(count × 0.95)`, `hi = ceil(count × 1.05)`.
+    pub fn from_approx(count: usize) -> Self {
+        let lo = count * 19 / 20;
+        let hi = (count * 21 + 19) / 20;
+        Self::Approx { lo, hi }
+    }
+
+    /// Accumulate another count into `self` (same variant assumed).
+    fn add(&mut self, other: &Self) {
+        match (self, other) {
+            (Self::Exact(a), Self::Exact(b)) => *a += b,
+            (Self::Approx { lo: alo, hi: ahi }, Self::Approx { lo: blo, hi: bhi }) => {
+                *alo += blo;
+                *ahi += bhi;
+            }
+            _ => {}
+        }
+    }
+}
+
 /// A single file entry with associated token counts.
 pub struct FileResult {
     /// Path relative to the walk root.
@@ -66,7 +117,7 @@ pub struct FileResult {
     /// Content kind (reuses `walk::FileKind`).
     pub kind: FileKind,
     /// Token counts keyed by tokenizer name.  Empty for non-text files.
-    pub tokens: BTreeMap<String, usize>,
+    pub tokens: BTreeMap<String, TokenCount>,
 }
 
 // ─── Public entry points ──────────────────────────────────────────────────────
@@ -91,8 +142,8 @@ pub fn write_output(
 
 fn sort_by_tokens(entries: &mut [&FileResult]) {
     entries.sort_by(|a, b| {
-        let a_max = a.tokens.values().copied().max().unwrap_or(0);
-        let b_max = b.tokens.values().copied().max().unwrap_or(0);
+        let a_max = a.tokens.values().map(TokenCount::hi).max().unwrap_or(0);
+        let b_max = b.tokens.values().map(TokenCount::hi).max().unwrap_or(0);
         b_max.cmp(&a_max).then_with(|| a.rel_path.cmp(&b.rel_path))
     });
 }
@@ -209,7 +260,15 @@ fn write_json(
                 let map: Map<String, Value> = e
                     .tokens
                     .iter()
-                    .map(|(k, v)| (k.clone(), Value::from(*v)))
+                    .map(|(k, v)| {
+                        let json_val = match v {
+                            TokenCount::Exact(n) => Value::from(*n),
+                            TokenCount::Approx { lo, hi } => {
+                                serde_json::json!({ "lo": lo, "hi": hi })
+                            }
+                        };
+                        (k.clone(), json_val)
+                    })
                     .collect();
                 Value::Object(map)
             };
@@ -235,18 +294,36 @@ fn write_json(
         .collect();
 
     // Grand totals.
-    let mut totals: Map<String, Value> = Map::new();
+    let mut totals: BTreeMap<String, TokenCount> = BTreeMap::new();
     for entry in entries {
-        for (name, &count) in &entry.tokens {
-            let existing = totals.entry(name.clone()).or_insert(Value::from(0_u64));
-            *existing = Value::from(existing.as_u64().unwrap_or(0) + count as u64);
+        for (name, count) in &entry.tokens {
+            match totals.entry(name.clone()) {
+                std::collections::btree_map::Entry::Occupied(mut e) => {
+                    e.get_mut().add(count);
+                }
+                std::collections::btree_map::Entry::Vacant(e) => {
+                    e.insert(count.clone());
+                }
+            }
         }
     }
+    let totals_val: Map<String, Value> = totals
+        .iter()
+        .map(|(k, v)| {
+            let json_val = match v {
+                TokenCount::Exact(n) => Value::from(*n),
+                TokenCount::Approx { lo, hi } => {
+                    serde_json::json!({ "lo": lo, "hi": hi })
+                }
+            };
+            (k.clone(), json_val)
+        })
+        .collect();
 
     let output = serde_json::json!({
         "root": root_label,
         "files": files,
-        "total": Value::Object(totals),
+        "total": Value::Object(totals_val),
     });
 
     let json_str =
@@ -262,10 +339,17 @@ fn write_totals(
     entries: &[FileResult],
     opts: &OutputOptions,
 ) -> std::io::Result<()> {
-    let mut totals: BTreeMap<String, usize> = BTreeMap::new();
+    let mut totals: BTreeMap<String, TokenCount> = BTreeMap::new();
     for entry in entries {
-        for (name, &count) in &entry.tokens {
-            *totals.entry(name.clone()).or_insert(0) += count;
+        for (name, count) in &entry.tokens {
+            match totals.entry(name.clone()) {
+                std::collections::btree_map::Entry::Occupied(mut e) => {
+                    e.get_mut().add(count);
+                }
+                std::collections::btree_map::Entry::Vacant(e) => {
+                    e.insert(count.clone());
+                }
+            }
         }
     }
 
@@ -315,29 +399,36 @@ fn format_tokens(entry: &FileResult, format: &CountFormat, color: bool) -> Strin
     }
 }
 
-fn format_counts(counts: &BTreeMap<String, usize>, format: &CountFormat) -> String {
+fn format_counts(counts: &BTreeMap<String, TokenCount>, format: &CountFormat) -> String {
     if counts.is_empty() {
         return String::new();
     }
 
     match format {
-        CountFormat::Named => {
-            // Named mode: "claude: 1,234  o200k: 1,178"
-            counts
-                .iter()
-                .map(|(name, &n)| format!("{name}: {}", format_number(n)))
-                .collect::<Vec<_>>()
-                .join("  ")
-        }
-        CountFormat::Single => {
-            // Single tokenizer: just the number.
-            let &n = counts.values().next().unwrap_or(&0);
-            format_number(n)
-        }
+        CountFormat::Named => counts
+            .iter()
+            .map(|(name, count)| match count {
+                TokenCount::Exact(n) => format!("{name}: {}", format_number(*n)),
+                TokenCount::Approx { lo, hi } => {
+                    format!(
+                        "{name}: {} \u{2013} {}",
+                        format_number(*lo),
+                        format_number(*hi)
+                    )
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("  "),
+        CountFormat::Single => match counts.values().next() {
+            Some(TokenCount::Exact(n)) => format_number(*n),
+            Some(TokenCount::Approx { lo, hi }) => {
+                format!("{} \u{2013} {}", format_number(*lo), format_number(*hi))
+            }
+            None => String::new(),
+        },
         CountFormat::Range => {
-            // Range mode: "1,178 – 1,234"
-            let min = counts.values().copied().min().unwrap_or(0);
-            let max = counts.values().copied().max().unwrap_or(0);
+            let min = counts.values().map(TokenCount::lo).min().unwrap_or(0);
+            let max = counts.values().map(TokenCount::hi).max().unwrap_or(0);
             if min == max {
                 format_number(min)
             } else {
@@ -382,7 +473,10 @@ mod tests {
         FileResult {
             rel_path: path.into(),
             kind: crate::walk::FileKind::Text,
-            tokens: counts.iter().map(|(k, v)| ((*k).to_string(), *v)).collect(),
+            tokens: counts
+                .iter()
+                .map(|(k, v)| ((*k).to_string(), TokenCount::Exact(*v)))
+                .collect(),
         }
     }
 
@@ -505,6 +599,20 @@ mod tests {
         );
         assert!(!s.contains('–'), "unexpected en-dash:\n{s}");
         assert!(s.contains("42"), "count missing:\n{s}");
+    }
+
+    /// Approximate (ctoc) count shows as a lo–hi range.
+    #[test]
+    fn approx_count_shows_range() {
+        let entry = FileResult {
+            rel_path: "f.rs".into(),
+            kind: crate::walk::FileKind::Text,
+            tokens: [("ctoc".to_string(), TokenCount::from_approx(1000))].into(),
+        };
+        let s = run(".", &[entry], &opts(true, false, false, CountFormat::Single));
+        assert!(s.contains('–'), "en-dash missing for approx range:\n{s}");
+        assert!(s.contains("950"), "lo bound missing:\n{s}");
+        assert!(s.contains("1,050"), "hi bound missing:\n{s}");
     }
 
     /// `-t o200k` explicit mode → "o200k: N" label.
