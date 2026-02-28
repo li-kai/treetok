@@ -2,4 +2,5 @@
 
 pub mod output;
 pub mod tokenize;
+pub mod tree;
 pub mod walk;
