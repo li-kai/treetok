@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use std::sync::Arc;
 
 use futures::stream::{self, StreamExt};
 
@@ -83,8 +82,6 @@ async fn claude_tokenize_all(
     entries: &[crate::walk::FileEntry],
     claude: &ClaudeTokenizer,
 ) {
-    let semaphore = Arc::new(tokio::sync::Semaphore::new(20));
-
     let text_indices: Vec<usize> = entries
         .iter()
         .enumerate()
@@ -94,13 +91,8 @@ async fn claude_tokenize_all(
 
     let counts: Vec<_> = stream::iter(text_indices)
         .map(|idx| {
-            let sem = semaphore.clone();
             let content = entries[idx].content.as_deref().unwrap_or("");
-            async move {
-                #[allow(clippy::expect_used)] // Semaphore is never closed.
-                let _permit = sem.acquire().await.expect("semaphore closed");
-                (idx, claude.count_tokens(content).await)
-            }
+            async move { (idx, claude.count_tokens(content).await) }
         })
         .buffer_unordered(20)
         .collect()
