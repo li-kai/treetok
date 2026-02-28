@@ -5,6 +5,7 @@ use futures::stream::{self, StreamExt};
 
 use super::remote::ClaudeTokenizer;
 use super::resolve::ResolvedTokenizers;
+use super::TokenizerId;
 use crate::output::TokenCount;
 use crate::walk::FileKind;
 
@@ -30,7 +31,7 @@ pub fn tokenize_entries(
                 }
                 FileKind::Text => {
                     let content = entry.content.as_deref().unwrap_or("");
-                    let mut counts: BTreeMap<String, TokenCount> = BTreeMap::new();
+                    let mut counts: BTreeMap<TokenizerId, TokenCount> = BTreeMap::new();
 
                     for tok in &tokenizers.local {
                         match tok.count_tokens(content) {
@@ -40,13 +41,13 @@ pub fn tokenize_entries(
                                 } else {
                                     TokenCount::Exact(n)
                                 };
-                                counts.insert(tok.name().to_string(), tc);
+                                counts.insert(tok.id(), tc);
                             }
                             Err(e) => {
                                 eprintln!(
                                     "warning: {} [{}]: {e}",
                                     entry.path.display(),
-                                    tok.name()
+                                    tok.id().as_str()
                                 );
                             }
                         }
@@ -110,10 +111,14 @@ async fn claude_tokenize_all(
             Ok(n) => {
                 results[idx]
                     .tokens
-                    .insert("claude".to_string(), TokenCount::Exact(n));
+                    .insert(TokenizerId::Claude, TokenCount::Exact(n));
             }
             Err(e) => {
-                eprintln!("warning: {} [claude]: {e}", entries[idx].path.display());
+                eprintln!(
+                    "warning: {} [{}]: {e}",
+                    entries[idx].path.display(),
+                    TokenizerId::Claude.as_str()
+                );
             }
         }
     }

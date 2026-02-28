@@ -1,6 +1,7 @@
 use super::error::TokenizeError;
 use super::local::{CtocTokenizer, O200kTokenizer, Tokenizer};
 use super::remote::{self, ClaudeTokenizer};
+use super::TokenizerId;
 
 /// Split tokenizer set: local (synchronous) and optional Claude (async).
 pub struct ResolvedTokenizers {
@@ -56,16 +57,16 @@ pub fn resolve_tokenizers(
         let mut claude: Option<ClaudeTokenizer> = None;
 
         for name in explicit {
-            match name.as_str() {
-                "o200k" => local.push(Box::new(O200kTokenizer::new()?)),
-                "ctoc" => local.push(Box::new(CtocTokenizer::new())),
-                "claude" => match (offline, api_key.clone()) {
+            match name.parse::<TokenizerId>() {
+                Ok(TokenizerId::O200k) => local.push(Box::new(O200kTokenizer::new()?)),
+                Ok(TokenizerId::Ctoc) => local.push(Box::new(CtocTokenizer::new())),
+                Ok(TokenizerId::Claude) => match (offline, api_key.clone()) {
                     (true, _) => eprintln!("warning: --offline set, skipping -t claude"),
                     (false, Some(key)) => claude = Some(ClaudeTokenizer::with_key(key)),
                     (false, None) => return Err(TokenizeError::NoApiKey),
                 },
-                other => {
-                    eprintln!("warning: unknown tokenizer {other:?}, skipping");
+                Err(()) => {
+                    eprintln!("warning: unknown tokenizer {:?}, skipping", name);
                 }
             }
         }
@@ -92,6 +93,7 @@ pub fn load_api_key() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::TokenizerId;
     use rstest::rstest;
 
     fn no_key() -> Option<String> {
@@ -111,8 +113,8 @@ mod tests {
     ) {
         let r = resolve_tokenizers(&[], offline, api_key).unwrap();
         assert_eq!(r.local.len(), 2);
-        assert_eq!(r.local[0].name(), "o200k");
-        assert_eq!(r.local[1].name(), "ctoc");
+        assert_eq!(r.local[0].id(), TokenizerId::O200k);
+        assert_eq!(r.local[1].id(), TokenizerId::Ctoc);
         assert!(r.claude.is_none());
     }
 
@@ -120,7 +122,7 @@ mod tests {
     fn range_mode_with_key_uses_claude() {
         let r = resolve_tokenizers(&[], false, some_key()).unwrap();
         assert_eq!(r.local.len(), 1);
-        assert_eq!(r.local[0].name(), "o200k");
+        assert_eq!(r.local[0].id(), TokenizerId::O200k);
         assert!(r.claude.is_some());
     }
 
@@ -134,7 +136,7 @@ mod tests {
     ) {
         let r = resolve_tokenizers(&[name.to_string()], offline, no_key()).unwrap();
         assert_eq!(r.local.len(), 1);
-        assert_eq!(r.local[0].name(), name);
+        assert_eq!(r.local[0].id().as_str(), name);
         assert_eq!(r.local[0].is_approximate(), is_approx);
         assert!(r.claude.is_none());
     }
@@ -144,8 +146,8 @@ mod tests {
         let r = resolve_tokenizers(&["o200k".to_string(), "ctoc".to_string()], false, no_key())
             .unwrap();
         assert_eq!(r.local.len(), 2);
-        assert_eq!(r.local[0].name(), "o200k");
-        assert_eq!(r.local[1].name(), "ctoc");
+        assert_eq!(r.local[0].id(), TokenizerId::O200k);
+        assert_eq!(r.local[1].id(), TokenizerId::Ctoc);
         assert!(r.claude.is_none());
     }
 
@@ -158,7 +160,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(r.local.len(), 1);
-        assert_eq!(r.local[0].name(), "o200k");
+        assert_eq!(r.local[0].id(), TokenizerId::O200k);
     }
 
     #[rstest]

@@ -10,6 +10,61 @@ pub use error::TokenizeError;
 pub use local::{CtocTokenizer, Tokenizer};
 pub use resolve::{load_api_key, resolve_tokenizers};
 pub use run::tokenize_entries;
+pub use tokenizer_id::TokenizerId;
+
+mod tokenizer_id {
+    use std::fmt;
+
+    /// Stable identifier for each supported tokenizer.
+    ///
+    /// Variant declaration order (Claude < Ctoc < O200k) mirrors the current
+    /// alphabetical string order so BTreeMap column sequences are unchanged.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+    pub enum TokenizerId {
+        /// The Claude API tokenizer (`"claude"`).
+        Claude,
+        /// The ctoc approximate tokenizer (`"ctoc"`).
+        Ctoc,
+        /// The OpenAI o200k_base tokenizer (`"o200k"`).
+        O200k,
+    }
+
+    impl TokenizerId {
+        /// Short CLI key used in `-t` flags and JSON output.
+        #[must_use]
+        pub fn as_str(self) -> &'static str {
+            match self {
+                Self::Claude => "claude",
+                Self::Ctoc => "ctoc",
+                Self::O200k => "o200k",
+            }
+        }
+    }
+
+    impl fmt::Display for TokenizerId {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            let s = match self {
+                Self::Claude => "Claude",
+                Self::Ctoc => "Claude~",
+                Self::O200k => "OpenAI",
+            };
+            write!(f, "{s}")
+        }
+    }
+
+    impl std::str::FromStr for TokenizerId {
+        type Err = ();
+
+        fn from_str(s: &str) -> Result<Self, Self::Err> {
+            match s {
+                "claude" => Ok(Self::Claude),
+                "ctoc" => Ok(Self::Ctoc),
+                "o200k" => Ok(Self::O200k),
+                _ => Err(()),
+            }
+        }
+    }
+}
 
 #[cfg(test)]
 use local::O200kTokenizer;

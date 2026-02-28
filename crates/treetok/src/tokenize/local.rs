@@ -1,11 +1,12 @@
 use aho_corasick::{AhoCorasick, MatchKind};
 
 use super::error::TokenizeError;
+use super::TokenizerId;
 
 /// Common interface for local (offline) token counters.
 pub trait Tokenizer {
-    /// Short identifier shown in output (e.g. `"o200k"`).
-    fn name(&self) -> &'static str;
+    /// Stable identifier for this tokenizer.
+    fn id(&self) -> TokenizerId;
     /// Count the tokens in `content`.
     fn count_tokens(&self, content: &str) -> Result<usize, TokenizeError>;
     /// Returns `true` if this tokenizer produces approximate counts.
@@ -30,8 +31,8 @@ impl O200kTokenizer {
 }
 
 impl Tokenizer for O200kTokenizer {
-    fn name(&self) -> &'static str {
-        "o200k"
+    fn id(&self) -> TokenizerId {
+        TokenizerId::O200k
     }
 
     fn count_tokens(&self, content: &str) -> Result<usize, TokenizeError> {
@@ -89,8 +90,8 @@ impl CtocTokenizer {
 }
 
 impl Tokenizer for CtocTokenizer {
-    fn name(&self) -> &'static str {
-        "ctoc"
+    fn id(&self) -> TokenizerId {
+        TokenizerId::Ctoc
     }
 
     fn is_approximate(&self) -> bool {

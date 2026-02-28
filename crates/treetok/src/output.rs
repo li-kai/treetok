@@ -6,6 +6,7 @@ use std::path::Path;
 
 use owo_colors::OwoColorize;
 
+use crate::tokenize::TokenizerId;
 use crate::tree::Tree;
 use crate::walk::FileKind;
 
@@ -116,8 +117,8 @@ pub struct FileResult {
     pub rel_path: std::path::PathBuf,
     /// Content kind (reuses `walk::FileKind`).
     pub kind: FileKind,
-    /// Token counts keyed by tokenizer name.  Empty for non-text files.
-    pub tokens: BTreeMap<String, TokenCount>,
+    /// Token counts keyed by tokenizer id.  Empty for non-text files.
+    pub tokens: BTreeMap<TokenizerId, TokenCount>,
 }
 
 // ─── Public entry points ──────────────────────────────────────────────────────
@@ -150,23 +151,23 @@ fn sort_by_tokens(entries: &mut [&FileResult]) {
 
 // ─── Column-width helpers ─────────────────────────────────────────────────────
 
-/// Sorted list of every tokenizer name present across all entries.
-fn all_tokenizer_names(entries: &[FileResult]) -> Vec<String> {
-    let mut names: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+/// Sorted list of every tokenizer id present across all entries.
+fn all_tokenizer_ids(entries: &[FileResult]) -> Vec<TokenizerId> {
+    let mut ids: std::collections::BTreeSet<TokenizerId> = std::collections::BTreeSet::new();
     for e in entries {
-        names.extend(e.tokens.keys().cloned());
+        ids.extend(e.tokens.keys().copied());
     }
-    names.into_iter().collect()
+    ids.into_iter().collect()
 }
 
-/// For each tokenizer (in `names` order), the maximum display width of its
+/// For each tokenizer (in `ids` order), the maximum display width of its
 /// formatted count string across all entries.  The width is also at least as
-/// wide as the tokenizer name itself (for the header row).
-fn max_count_widths(entries: &[FileResult], names: &[String]) -> Vec<usize> {
-    let mut widths: Vec<usize> = names.iter().map(|n| display_name(n).chars().count()).collect();
+/// wide as the tokenizer's display name (for the header row).
+fn max_count_widths(entries: &[FileResult], ids: &[TokenizerId]) -> Vec<usize> {
+    let mut widths: Vec<usize> = ids.iter().map(|id| id.to_string().chars().count()).collect();
     for e in entries {
-        for (i, name) in names.iter().enumerate() {
-            if let Some(tc) = e.tokens.get(name) {
+        for (i, id) in ids.iter().enumerate() {
+            if let Some(tc) = e.tokens.get(id) {
                 let w = format_single_count(tc).chars().count();
                 widths[i] = widths[i].max(w);
             }
@@ -190,14 +191,14 @@ fn format_single_count(tc: &TokenCount) -> String {
 /// Each column is `"  " + right-aligned count`, matching the header layout
 /// produced by [`write_tree_named`] and the flat Named table.
 fn format_named_columns(
-    tokens: &BTreeMap<String, TokenCount>,
-    names: &[String],
+    tokens: &BTreeMap<TokenizerId, TokenCount>,
+    ids: &[TokenizerId],
     widths: &[usize],
 ) -> String {
     use std::fmt::Write as _;
     let mut s = String::new();
-    for (name, w) in names.iter().zip(widths) {
-        let cell = tokens.get(name).map(format_single_count).unwrap_or_default();
+    for (id, w) in ids.iter().zip(widths) {
+        let cell = tokens.get(id).map(format_single_count).unwrap_or_default();
         write!(s, "  {:>w$}", cell, w = *w).unwrap();
     }
     s
@@ -289,14 +290,14 @@ fn write_tree_named(
     entries: &[FileResult],
     opts: &OutputOptions,
 ) -> std::io::Result<()> {
-    let names = all_tokenizer_names(entries);
-    let widths = max_count_widths(entries, &names);
+    let ids = all_tokenizer_ids(entries);
+    let widths = max_count_widths(entries, &ids);
     let name_col = name_col_width(entries);
 
     // Header row — blank padding to name_col, then right-aligned column labels.
     write!(out, "{:<name_col$}", "", name_col = name_col)?;
-    for (name, w) in names.iter().zip(&widths) {
-        write!(out, "  {:>w$}", display_name(name).to_uppercase(), w = w)?;
+    for (id, w) in ids.iter().zip(&widths) {
+        write!(out, "  {:>w$}", id.to_string().to_uppercase(), w = w)?;
     }
     writeln!(out)?;
 
@@ -308,7 +309,7 @@ fn write_tree_named(
         Path::new(""),
         opts,
         &|file| match &file.kind {
-            FileKind::Text => format_named_columns(&file.tokens, &names, &widths),
+            FileKind::Text => format_named_columns(&file.tokens, &ids, &widths),
             _ => format_tokens(file, &CountFormat::Named, opts.color),
         },
     );
@@ -322,12 +323,12 @@ fn write_tree_named(
     })?;
 
     // Totals row.
-    let mut totals: BTreeMap<String, TokenCount> = BTreeMap::new();
+    let mut totals: BTreeMap<TokenizerId, TokenCount> = BTreeMap::new();
     accumulate_totals(entries, &mut totals);
     if !totals.is_empty() {
         write!(out, "\n{:<name_col$}", "TOTAL", name_col = name_col)?;
-        for (name, w) in names.iter().zip(&widths) {
-            let cell = totals.get(name).map(format_single_count).unwrap_or_default();
+        for (id, w) in ids.iter().zip(&widths) {
+            let cell = totals.get(id).map(format_single_count).unwrap_or_default();
             write!(out, "  {:>w$}", cell, w = w)?;
         }
         writeln!(out)?;
@@ -413,13 +414,13 @@ fn write_flat(
     match &opts.count_format {
         // Named format: emit a proper multi-column table with a header row.
         CountFormat::Named => {
-            let names = all_tokenizer_names(entries);
-            let widths = max_count_widths(entries, &names);
+            let ids = all_tokenizer_ids(entries);
+            let widths = max_count_widths(entries, &ids);
 
             // Header.
             write!(out, "{:<path_w$}", "PATH", path_w = path_w)?;
-            for (name, w) in names.iter().zip(&widths) {
-                write!(out, "  {:>w$}", display_name(name).to_uppercase(), w = w)?;
+            for (id, w) in ids.iter().zip(&widths) {
+                write!(out, "  {:>w$}", id.to_string().to_uppercase(), w = w)?;
             }
             writeln!(out)?;
 
@@ -429,10 +430,10 @@ fn write_flat(
                 match &entry.kind {
                     FileKind::Text => {
                         write!(out, "{path_str:<path_w$}", path_w = path_w)?;
-                        for (name, w) in names.iter().zip(&widths) {
+                        for (id, w) in ids.iter().zip(&widths) {
                             let cell = entry
                                 .tokens
-                                .get(name)
+                                .get(id)
                                 .map(format_single_count)
                                 .unwrap_or_default();
                             write!(out, "  {:>w$}", cell, w = w)?;
@@ -447,13 +448,13 @@ fn write_flat(
             }
 
             // Totals row.
-            let mut totals: BTreeMap<String, TokenCount> = BTreeMap::new();
+            let mut totals: BTreeMap<TokenizerId, TokenCount> = BTreeMap::new();
             accumulate_totals(entries, &mut totals);
             if !totals.is_empty() {
                 write!(out, "\n{:<path_w$}", "TOTAL", path_w = path_w)?;
-                for (name, w) in names.iter().zip(&widths) {
+                for (id, w) in ids.iter().zip(&widths) {
                     let cell = totals
-                        .get(name)
+                        .get(id)
                         .map(format_single_count)
                         .unwrap_or_default();
                     write!(out, "  {:>w$}", cell, w = w)?;
@@ -509,7 +510,7 @@ fn write_json(
                                 serde_json::json!({ "lo": lo, "hi": hi })
                             }
                         };
-                        (k.clone(), json_val)
+                        (k.as_str().to_string(), json_val)
                     })
                     .collect();
                 Value::Object(map)
@@ -534,7 +535,7 @@ fn write_json(
         })
         .collect();
 
-    let mut totals: BTreeMap<String, TokenCount> = BTreeMap::new();
+    let mut totals: BTreeMap<TokenizerId, TokenCount> = BTreeMap::new();
     accumulate_totals(entries, &mut totals);
     let totals_val: Map<String, Value> = totals
         .iter()
@@ -545,7 +546,7 @@ fn write_json(
                     serde_json::json!({ "lo": lo, "hi": hi })
                 }
             };
-            (k.clone(), json_val)
+            (k.as_str().to_string(), json_val)
         })
         .collect();
 
@@ -563,10 +564,10 @@ fn write_json(
 
 // ─── Totals ───────────────────────────────────────────────────────────────────
 
-fn accumulate_totals(entries: &[FileResult], totals: &mut BTreeMap<String, TokenCount>) {
+fn accumulate_totals(entries: &[FileResult], totals: &mut BTreeMap<TokenizerId, TokenCount>) {
     for entry in entries {
         for (name, count) in &entry.tokens {
-            match totals.entry(name.clone()) {
+            match totals.entry(*name) {
                 std::collections::btree_map::Entry::Occupied(mut e) => {
                     e.get_mut().add(count);
                 }
@@ -583,7 +584,7 @@ fn write_totals(
     entries: &[FileResult],
     opts: &OutputOptions,
 ) -> std::io::Result<()> {
-    let mut totals: BTreeMap<String, TokenCount> = BTreeMap::new();
+    let mut totals: BTreeMap<TokenizerId, TokenCount> = BTreeMap::new();
     accumulate_totals(entries, &mut totals);
 
     if totals.is_empty() {
@@ -614,7 +615,7 @@ fn format_tokens(entry: &FileResult, format: &CountFormat, color: bool) -> Strin
     }
 }
 
-fn format_counts(counts: &BTreeMap<String, TokenCount>, format: &CountFormat) -> String {
+fn format_counts(counts: &BTreeMap<TokenizerId, TokenCount>, format: &CountFormat) -> String {
     if counts.is_empty() {
         return String::new();
     }
@@ -670,21 +671,12 @@ fn dim(s: &str, color: bool) -> String {
     if color { s.dimmed().to_string() } else { s.to_string() }
 }
 
-/// Human-readable column label for a tokenizer key.
-fn display_name(key: &str) -> &str {
-    match key {
-        "o200k" => "OpenAI",
-        "claude" => "Claude",
-        "ctoc" => "Claude~",
-        other => other,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use rstest::{fixture, rstest};
 
     use super::*;
+    use crate::tokenize::TokenizerId;
 
     // ── fixtures and helpers ───────────────────────────────────────────────
 
@@ -694,7 +686,7 @@ mod tests {
             kind: crate::walk::FileKind::Text,
             tokens: counts
                 .iter()
-                .map(|(k, v)| ((*k).to_string(), TokenCount::Exact(*v)))
+                .map(|(k, v)| (k.parse::<TokenizerId>().unwrap(), TokenCount::Exact(*v)))
                 .collect(),
         }
     }
@@ -818,8 +810,8 @@ mod tests {
     fn flat_named_columns_are_right_aligned() {
         // "1,234" is wider than "42"; the narrower value should gain leading spaces.
         let entries = [
-            text_result("a.rs", &[("tok", 42)]),
-            text_result("b.rs", &[("tok", 1_234)]),
+            text_result("a.rs", &[("o200k", 42)]),
+            text_result("b.rs", &[("o200k", 1_234)]),
         ];
         let s = run(".", &entries, &opts(true, false, false, CountFormat::Named));
         assert!(s.contains("   42") || s.contains("  42"), "right-align missing:\n{s}");
@@ -842,7 +834,7 @@ mod tests {
         let entry = FileResult {
             rel_path: "f.rs".into(),
             kind: crate::walk::FileKind::Text,
-            tokens: [("ctoc".to_string(), TokenCount::from_approx(1000))].into(),
+            tokens: [(TokenizerId::Ctoc, TokenCount::from_approx(1000))].into(),
         };
         let s = run(".", &[entry], &opts(true, false, false, CountFormat::Range));
         assert!(s.contains("957"), "lo bound missing:\n{s}");
@@ -856,8 +848,8 @@ mod tests {
             rel_path: "f.rs".into(),
             kind: crate::walk::FileKind::Text,
             tokens: [
-                ("ctoc".to_string(), TokenCount::from_approx(120)),
-                ("o200k".to_string(), TokenCount::Exact(100)),
+                (TokenizerId::Ctoc, TokenCount::from_approx(120)),
+                (TokenizerId::O200k, TokenCount::Exact(100)),
             ]
             .into(),
         };
@@ -879,7 +871,7 @@ mod tests {
         let entry = FileResult {
             rel_path: "f.rs".into(),
             kind: crate::walk::FileKind::Text,
-            tokens: [("ctoc".to_string(), TokenCount::from_approx(1000))].into(),
+            tokens: [(TokenizerId::Ctoc, TokenCount::from_approx(1000))].into(),
         };
         let s = run(".", &[entry], &flat_opts);
         assert!(s.contains('–'), "en-dash missing for approx range:\n{s}");
@@ -932,14 +924,6 @@ mod tests {
             .collect();
         assert_eq!(line_lengths.len(), 2, "expected 2 file lines:\n{s}");
         assert_eq!(line_lengths[0], line_lengths[1], "right edges not aligned:\n{s}");
-    }
-
-    #[test]
-    fn display_name_maps_known_tokenizers() {
-        assert_eq!(display_name("o200k"), "OpenAI");
-        assert_eq!(display_name("claude"), "Claude");
-        assert_eq!(display_name("ctoc"), "Claude~");
-        assert_eq!(display_name("other"), "other");
     }
 
     // ── from_approx ────────────────────────────────────────────────────────
