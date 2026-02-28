@@ -51,13 +51,6 @@
           cargoLock.lockFile = ./Cargo.lock;
           cargoBuildFlags = [ "--package" "treetok" ];
           nativeBuildInputs = with pkgs; [ pkg-config ];
-          buildInputs =
-            with pkgs;
-            [ openssl ]
-            ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
-              pkgs.darwin.apple_sdk.frameworks.Security
-              pkgs.darwin.apple_sdk.frameworks.SystemConfiguration
-            ];
         };
 
         devShells.default = pkgs.mkShell {
