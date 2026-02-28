@@ -56,10 +56,37 @@ mod tests {
         assert!(long > short);
     }
 
-    /// Tokenizer name is the expected string.
+
+    // ── CtocTokenizer ──────────────────────────────────────────────────────
+
+    #[fixture]
+    fn ctoc() -> CtocTokenizer {
+        CtocTokenizer::new()
+    }
+
     #[rstest]
-    fn o200k_name(o200k: O200kTokenizer) {
-        assert_eq!(o200k.name(), "o200k");
+    fn ctoc_empty_string_is_zero_tokens(ctoc: CtocTokenizer) {
+        assert_eq!(ctoc.count_tokens("").unwrap(), 0);
+    }
+
+    #[rstest]
+    #[case("a")]
+    #[case("hello")]
+    #[case("Hello, world!")]
+    #[case("fn main() { println!(\"hi\"); }")]
+    fn ctoc_nonempty_input_has_positive_count(ctoc: CtocTokenizer, #[case] input: &str) {
+        assert!(ctoc.count_tokens(input).unwrap() > 0);
+    }
+
+    #[rstest]
+    fn ctoc_longer_text_has_more_tokens(ctoc: CtocTokenizer) {
+        let short = ctoc.count_tokens("hi").unwrap();
+        let long = ctoc
+            .count_tokens(
+                "hello world this is a longer sentence with many more words and tokens in it",
+            )
+            .unwrap();
+        assert!(long > short);
     }
 
     // ── resolve_tokenizers ─────────────────────────────────────────────────
@@ -79,6 +106,34 @@ mod tests {
         let resolved = resolve_tokenizers(&["o200k".to_string()], false).unwrap();
         assert_eq!(resolved.local.len(), 1);
         assert_eq!(resolved.local[0].name(), "o200k");
+        assert!(resolved.claude.is_none());
+    }
+
+    /// Explicit `-t ctoc` → one local approximate tokenizer named "ctoc".
+    #[test]
+    fn resolve_explicit_ctoc() {
+        let resolved = resolve_tokenizers(&["ctoc".to_string()], false).unwrap();
+        assert_eq!(resolved.local.len(), 1);
+        assert_eq!(resolved.local[0].name(), "ctoc");
+        assert!(resolved.local[0].is_approximate());
+        assert!(resolved.claude.is_none());
+    }
+
+    /// When no API key is set, range mode includes ctoc as an approximation.
+    #[test]
+    fn resolve_no_api_key_includes_ctoc() {
+        // Ensure neither key is set for this test.
+        let treetok_key = std::env::var("TREETOK_API_KEY").ok();
+        let anthropic_key = std::env::var("ANTHROPIC_API_KEY").ok();
+        if treetok_key.is_some() || anthropic_key.is_some() {
+            // Skip: an API key is present, so ctoc fallback won't activate.
+            return;
+        }
+        let resolved = resolve_tokenizers(&[], false).unwrap();
+        assert!(
+            resolved.local.iter().any(|t| t.name() == "ctoc"),
+            "expected ctoc in local tokenizers when no API key is set"
+        );
         assert!(resolved.claude.is_none());
     }
 
