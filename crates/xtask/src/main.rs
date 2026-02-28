@@ -52,8 +52,7 @@ fn update_ctoc() {
 
     // ── parse ─────────────────────────────────────────────────────────────────
 
-    let root: serde_json::Value =
-        serde_json::from_str(&body).expect("failed to parse vocab.json");
+    let root: serde_json::Value = serde_json::from_str(&body).expect("failed to parse vocab.json");
     let tokens: Vec<String> = serde_json::from_value(
         root.get("verified")
             .expect("missing \"verified\" key in vocab.json")
@@ -77,27 +76,22 @@ fn update_ctoc() {
 
     // ── write ─────────────────────────────────────────────────────────────────
 
-    let out_path = workspace_root()
-        .join("crates/treetok/src/tokenize/ctoc_vocab.bin");
+    let out_path = workspace_root().join("crates/treetok/src/tokenize/ctoc_vocab.bin");
 
     let mut file = std::fs::File::create(&out_path)
         .unwrap_or_else(|e| panic!("cannot create {}: {e}", out_path.display()));
     file.write_all(&buf)
         .unwrap_or_else(|e| panic!("write failed: {e}"));
 
-    eprintln!(
-        "Written {} bytes to {}",
-        buf.len(),
-        out_path.display()
-    );
+    eprintln!("Written {} bytes to {}", buf.len(), out_path.display());
 }
 
 /// Resolve the workspace root as the parent of this package's manifest dir.
 fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()   // crates/
+        .parent() // crates/
         .expect("crates/ parent missing")
-        .parent()   // workspace root
+        .parent() // workspace root
         .expect("workspace root missing")
         .to_path_buf()
 }

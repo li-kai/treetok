@@ -1,8 +1,8 @@
 //! Tokenizer trait and concrete implementations.
 
-mod remote;
 mod error;
 mod local;
+mod remote;
 mod resolve;
 mod run;
 
@@ -55,7 +55,6 @@ mod tests {
             .unwrap();
         assert!(long > short);
     }
-
 
     // ── CtocTokenizer ──────────────────────────────────────────────────────
 

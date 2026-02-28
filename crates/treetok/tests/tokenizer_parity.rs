@@ -1,22 +1,22 @@
-//! Parity test: HuggingFace Claude-tokenizer candidates vs. Anthropic's
+//! Parity test: `HuggingFace` Claude-tokenizer candidates vs. Anthropic's
 //! `count_tokens` API endpoint, using this repository's own source files —
 //! every text file under `crates/` — as the comparison corpus.
 //!
 //! # Background
 //!
 //! Anthropic has not released the tokenizer for Claude 3 or later.  All
-//! publicly available HuggingFace models claiming to be "the Claude tokenizer"
+//! publicly available `HuggingFace` models claiming to be "the Claude tokenizer"
 //! derive from the officially released **Claude 1/2** vocabulary
 //! (`anthropics/anthropic-tokenizer-typescript`, vocab size 64 739).
 //!
 //! The best-known independent reverse-engineering effort is **ctoc** (Rohan
-//! Gupta, Feb 2026), which probed the count_tokens API ~277 000 times to
+//! Gupta, Feb 2026), which probed the `count_tokens` API ~277 000 times to
 //! recover 36 495 verified tokens and claims ~96 % accuracy on Claude 4.x.
-//! ctoc is Python-only and not available as a HuggingFace `tokenizer.json`.
+//! ctoc is Python-only and not available as a `HuggingFace` `tokenizer.json`.
 //!
 //! Candidates evaluated here (all loadable via the `tokenizers` Rust crate):
 //!
-//! | id | HuggingFace model | Notes |
+//! | id | `HuggingFace` model | Notes |
 //! |---|---|---|
 //! | `xenova` | `Xenova/claude-tokenizer` | Claude 1/2 verbatim |
 //! | `leafspark` | `leafspark/claude-3-tokenizer` | Custom format; loaded speculatively |
@@ -118,6 +118,7 @@ async fn try_fetch_tokenizer(id: &str, url: &str) -> Option<Tokenizer> {
 }
 
 fn local_count(tok: &Tokenizer, text: &str) -> usize {
+    #[allow(clippy::expect_used)] // helper only called from test fns; panic is correct behaviour
     tok.encode(text, false)
         .expect("local tokenizer encode failed")
         .get_ids()
@@ -129,6 +130,9 @@ fn local_count(tok: &Tokenizer, text: &str) -> usize {
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires ANTHROPIC_API_KEY (or TREETOK_API_KEY) and network access"]
 async fn hf_claude_tokenizer_candidates_vs_api() {
+    const REF1: &str = "a";
+    const REF2: &str = "hello world";
+
     // ── remote tokenizer ─────────────────────────────────────────────────────
 
     let resolved = resolve_tokenizers(&["claude".to_string()], false)
@@ -148,9 +152,6 @@ async fn hf_claude_tokenizer_candidates_vs_api() {
     let xenova = try_fetch_tokenizer("xenova (overhead probe)", CANDIDATES[0].url)
         .await
         .expect("Xenova tokenizer must be available to establish envelope overhead");
-
-    const REF1: &str = "a";
-    const REF2: &str = "hello world";
 
     let ref1_remote: usize = remote
         .count_tokens(REF1)
