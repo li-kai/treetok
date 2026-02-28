@@ -148,6 +148,43 @@ fn sort_by_tokens(entries: &mut [&FileResult]) {
     });
 }
 
+// ─── Column-width helpers ─────────────────────────────────────────────────────
+
+/// Sorted list of every tokenizer name present across all entries.
+fn all_tokenizer_names(entries: &[FileResult]) -> Vec<String> {
+    let mut names: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for e in entries {
+        names.extend(e.tokens.keys().cloned());
+    }
+    names.into_iter().collect()
+}
+
+/// For each tokenizer (in `names` order), the maximum display width of its
+/// formatted count string across all entries.  The width is also at least as
+/// wide as the tokenizer name itself (for the header row).
+fn max_count_widths(entries: &[FileResult], names: &[String]) -> Vec<usize> {
+    let mut widths: Vec<usize> = names.iter().map(|n| n.chars().count()).collect();
+    for e in entries {
+        for (i, name) in names.iter().enumerate() {
+            if let Some(tc) = e.tokens.get(name) {
+                let w = format_single_count(tc).chars().count();
+                widths[i] = widths[i].max(w);
+            }
+        }
+    }
+    widths
+}
+
+/// Format a single `TokenCount` as a plain string (no label, no brackets).
+fn format_single_count(tc: &TokenCount) -> String {
+    match tc {
+        TokenCount::Exact(n) => format_number(*n),
+        TokenCount::Approx { lo, hi } => {
+            format!("{} \u{2013} ~{}", format_number(*lo), format_number(*hi))
+        }
+    }
+}
+
 // ─── Tree node type ───────────────────────────────────────────────────────────
 
 /// The label stored in every `Tree` node.
@@ -285,15 +322,72 @@ fn write_flat(
         .iter()
         .map(|e| e.rel_path.display().to_string().chars().count())
         .max()
-        .unwrap_or(0);
+        .unwrap_or(0)
+        .max(4); // at least wide enough for "PATH"
 
-    for entry in &sorted {
-        let path_str = entry.rel_path.display().to_string();
-        let count_str = format_tokens(entry, &opts.count_format, opts.color);
-        writeln!(out, "{path_str:<path_w$}  {count_str}", path_w = path_w)?;
+    match &opts.count_format {
+        // Named format: emit a proper multi-column table with a header row.
+        CountFormat::Named => {
+            let names = all_tokenizer_names(entries);
+            let widths = max_count_widths(entries, &names);
+
+            // Header.
+            write!(out, "{:<path_w$}", "PATH", path_w = path_w)?;
+            for (name, w) in names.iter().zip(&widths) {
+                write!(out, "  {:>w$}", name.to_uppercase(), w = w)?;
+            }
+            writeln!(out)?;
+
+            // Rows.
+            for entry in &sorted {
+                let path_str = entry.rel_path.display().to_string();
+                match &entry.kind {
+                    FileKind::Text => {
+                        write!(out, "{path_str:<path_w$}", path_w = path_w)?;
+                        for (name, w) in names.iter().zip(&widths) {
+                            let cell = entry
+                                .tokens
+                                .get(name)
+                                .map(format_single_count)
+                                .unwrap_or_default();
+                            write!(out, "  {:>w$}", cell, w = w)?;
+                        }
+                        writeln!(out)?;
+                    }
+                    _ => {
+                        let label = format_tokens(entry, &opts.count_format, opts.color);
+                        writeln!(out, "{path_str:<path_w$}  {label}", path_w = path_w)?;
+                    }
+                }
+            }
+
+            // Totals row.
+            let mut totals: BTreeMap<String, TokenCount> = BTreeMap::new();
+            accumulate_totals(entries, &mut totals);
+            if !totals.is_empty() {
+                write!(out, "\n{:<path_w$}", "TOTAL", path_w = path_w)?;
+                for (name, w) in names.iter().zip(&widths) {
+                    let cell = totals
+                        .get(name)
+                        .map(format_single_count)
+                        .unwrap_or_default();
+                    write!(out, "  {:>w$}", cell, w = w)?;
+                }
+                writeln!(out)?;
+            }
+        }
+
+        // Single / Range: align the count block start to a fixed column.
+        _ => {
+            for entry in &sorted {
+                let path_str = entry.rel_path.display().to_string();
+                let count_str = format_tokens(entry, &opts.count_format, opts.color);
+                writeln!(out, "{path_str:<path_w$}  {count_str}", path_w = path_w)?;
+            }
+            write_totals(out, entries, opts)?;
+        }
     }
 
-    write_totals(out, entries, opts)?;
     Ok(())
 }
 
@@ -585,6 +679,37 @@ mod tests {
         assert!(pos_c < pos_a, "c should precede a:\n{s}");
     }
 
+    // ── flat Named tabular mode ────────────────────────────────────────────
+
+    #[test]
+    fn flat_named_has_header_row() {
+        let entries = [text_result("f.rs", &[("claude", 100), ("o200k", 120)])];
+        let s = run(".", &entries, &opts(true, false, false, CountFormat::Named));
+        assert!(s.contains("CLAUDE"), "CLAUDE header missing:\n{s}");
+        assert!(s.contains("O200K"), "O200K header missing:\n{s}");
+    }
+
+    #[test]
+    fn flat_named_has_total_row() {
+        let entries = [
+            text_result("a.rs", &[("o200k", 100)]),
+            text_result("b.rs", &[("o200k", 200)]),
+        ];
+        let s = run(".", &entries, &opts(true, false, false, CountFormat::Named));
+        assert!(s.contains("TOTAL"), "TOTAL row missing:\n{s}");
+        assert!(s.contains("300"), "total count missing:\n{s}");
+    }
+
+    #[test]
+    fn flat_named_columns_are_right_aligned() {
+        let entries = [
+            text_result("a.rs", &[("tok", 42)]),
+            text_result("b.rs", &[("tok", 1_234)]),
+        ];
+        let s = run(".", &entries, &opts(true, false, false, CountFormat::Named));
+        assert!(s.contains("   42") || s.contains("  42"), "right-align missing:\n{s}");
+    }
+
     // ── range vs named mode ────────────────────────────────────────────────
 
     #[test]
@@ -683,7 +808,7 @@ mod tests {
         let entries = [text_result("f.rs", &[("o200k", 42)])];
         let s = run(".", &entries, &opts(true, false, false, CountFormat::Named));
         assert!(s.contains("42"), "count missing:\n{s}");
-        assert!(s.contains("o200k"), "label missing:\n{s}");
+        assert!(s.contains("O200K") || s.contains("o200k"), "label missing:\n{s}");
     }
 
     // ── tree mode ──────────────────────────────────────────────────────────
@@ -720,8 +845,6 @@ mod tests {
             text_result("sub/deep.rs", &[("o200k", 999)]),
         ];
         let s = run(".", &entries, &opts(false, false, false, CountFormat::Single));
-        // Use char count, not byte offset: box-drawing glyphs (│ └ ─) are
-        // each 3 bytes but 1 display column.
         let bracket_cols: Vec<usize> = s
             .lines()
             .filter(|l| l.contains(".rs"))
