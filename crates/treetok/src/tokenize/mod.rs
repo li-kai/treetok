@@ -95,7 +95,10 @@ mod tests {
         let input = "The quick brown fox jumps over the lazy dog. ".repeat(100);
         let count1 = ctoc.count_tokens(&input).unwrap();
         let count2 = ctoc.count_tokens(&input).unwrap();
-        assert_eq!(count1, count2, "same input should always produce same count");
+        assert_eq!(
+            count1, count2,
+            "same input should always produce same count"
+        );
         assert!(count1 > 0);
     }
 
@@ -121,5 +124,4 @@ mod tests {
     fn ctoc_is_approximate(ctoc: CtocTokenizer) {
         assert!(ctoc.is_approximate());
     }
-
 }
