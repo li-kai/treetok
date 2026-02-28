@@ -22,18 +22,30 @@ Total: [13,014]
 
 ## Installation
 
-Install [Nix][nix] (macOS or Linux), then:
+**macOS (Homebrew)**
+
+```bash
+brew install li-kai/treetok/treetok
+```
+
+**Pre-built binaries**
+
+Download the latest binary for your platform from the [GitHub Releases][releases] page.
+
+**Nix**
 
 ```bash
 nix build
 ./result/bin/treetok --help
 ```
 
-Or with Rust:
+**Cargo**
 
 ```bash
-cargo install --path crates/treetok
+cargo install --git https://github.com/li-kai/treetok treetok
 ```
+
+[releases]: https://github.com/li-kai/treetok/releases
 
 ## Usage
 
