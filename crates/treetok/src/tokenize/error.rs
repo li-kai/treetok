@@ -10,7 +10,9 @@ pub enum TokenizeError {
     #[error("API key not found")]
     #[diagnostic(
         code(treetok::tokenize::no_api_key),
-        help("set the TREETOK_API_KEY or ANTHROPIC_API_KEY environment variable, or use --offline")
+        help(
+            "set the TREETOK_API_KEY or ANTHROPIC_API_KEY environment variable, or use --offline"
+        )
     )]
     NoApiKey,
 

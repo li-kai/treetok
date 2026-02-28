@@ -29,10 +29,11 @@ pub struct ClaudeTokenizer {
 
 /// Select the API key from two candidates, preferring the first.
 /// Returns an error if both are unavailable.
-fn select_api_key(preferred: Option<String>, fallback: Option<String>) -> Result<String, TokenizeError> {
-    preferred
-        .or(fallback)
-        .ok_or(TokenizeError::NoApiKey)
+fn select_api_key(
+    preferred: Option<String>,
+    fallback: Option<String>,
+) -> Result<String, TokenizeError> {
+    preferred.or(fallback).ok_or(TokenizeError::NoApiKey)
 }
 
 /// Load API key from environment, preferring `TREETOK_API_KEY` over `ANTHROPIC_API_KEY`.

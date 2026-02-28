@@ -108,7 +108,9 @@ async fn claude_tokenize_all(
     for (idx, result) in counts {
         match result {
             Ok(n) => {
-                results[idx].tokens.insert("claude".to_string(), TokenCount::Exact(n));
+                results[idx]
+                    .tokens
+                    .insert("claude".to_string(), TokenCount::Exact(n));
             }
             Err(e) => {
                 eprintln!("warning: {} [claude]: {e}", entries[idx].path.display());

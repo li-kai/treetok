@@ -57,8 +57,15 @@ pub struct CtocTokenizer {
     max_len: usize,
 }
 
+impl Default for CtocTokenizer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CtocTokenizer {
     /// Build the tokenizer from the embedded vocab.
+    #[must_use]
     pub fn new() -> Self {
         let mut vocab = HashSet::new();
         let mut max_len = 0usize;

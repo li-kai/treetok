@@ -100,9 +100,10 @@ impl TokenCount {
     /// ±2 token floor is applied: every range is at least 4 tokens wide.
     ///
     /// `lo = max(0, floor(count × 0.959) − 2)`, `hi = ceil(count × 1.041) + 2`.
+    #[must_use]
     pub fn from_approx(count: usize) -> Self {
         let lo = (count * 959 / 1000).saturating_sub(2);
-        let hi = (count * 1041 + 999) / 1000 + 2;
+        let hi = (count * 1041).div_ceil(1000) + 2;
         Self::Approx { lo, hi }
     }
 
@@ -614,34 +615,44 @@ mod tests {
 
     /// Large count: percentage band dominates; floor has no effect.
     #[rstest]
-    #[case(1000, 957, 1043)]  // 0.959×1000−2=957, ceil(1.041×1000)+2=1043
-    #[case(200,  189,  211)]  // 200*959/1000−2=189, (200*1041+999)/1000+2=211
-    #[case(100,   93,  107)]  // 100*959/1000−2=93,  (100*1041+999)/1000+2=107
+    #[case(1000, 957, 1043)] // 0.959×1000−2=957, ceil(1.041×1000)+2=1043
+    #[case(200, 189, 211)] // 200*959/1000−2=189, (200*1041+999)/1000+2=211
+    #[case(100, 93, 107)] // 100*959/1000−2=93,  (100*1041+999)/1000+2=107
     fn from_approx_large(#[case] count: usize, #[case] lo: usize, #[case] hi: usize) {
         match TokenCount::from_approx(count) {
-            TokenCount::Approx { lo: got_lo, hi: got_hi } => {
+            TokenCount::Approx {
+                lo: got_lo,
+                hi: got_hi,
+            } => {
                 assert_eq!(got_lo, lo, "lo mismatch for count={count}");
                 assert_eq!(got_hi, hi, "hi mismatch for count={count}");
             }
-            other => panic!("expected Approx, got Exact for count={count}: {other:?}"),
+            other @ TokenCount::Exact(_) => {
+                panic!("expected Approx, got Exact for count={count}: {other:?}")
+            }
         }
     }
 
     /// Small count: absolute floor kicks in, range stays at least 4 tokens wide.
     #[rstest]
-    #[case(10, 7,  13)]   // 10*959/1000−2=9−2=7, (10*1041+999)/1000+2=11+2=13
-    #[case(5,  2,  8)]    // 5*959/1000−2=4−2=2,  (5*1041+999)/1000+2=6+2=8
-    #[case(1,  0,  4)]    // 1*959/1000=0 saturates→0, (1*1041+999)/1000+2=2+2=4
-    #[case(0,  0,  2)]    // 0 − 2 saturates → 0; (0+999)/1000+2=0+2=2
+    #[case(10, 7, 13)] // 10*959/1000−2=9−2=7, (10*1041+999)/1000+2=11+2=13
+    #[case(5, 2, 8)] // 5*959/1000−2=4−2=2,  (5*1041+999)/1000+2=6+2=8
+    #[case(1, 0, 4)] // 1*959/1000=0 saturates→0, (1*1041+999)/1000+2=2+2=4
+    #[case(0, 0, 2)] // 0 − 2 saturates → 0; (0+999)/1000+2=0+2=2
     fn from_approx_small_uses_floor(#[case] count: usize, #[case] lo: usize, #[case] hi: usize) {
         match TokenCount::from_approx(count) {
-            TokenCount::Approx { lo: got_lo, hi: got_hi } => {
+            TokenCount::Approx {
+                lo: got_lo,
+                hi: got_hi,
+            } => {
                 assert_eq!(got_lo, lo, "lo mismatch for count={count}");
                 assert_eq!(got_hi, hi, "hi mismatch for count={count}");
-                assert!(got_hi - got_lo >= 4 || count == 0 || count == 1,
-                    "band too narrow ({got_lo}–{got_hi}) for count={count}");
+                assert!(
+                    got_hi - got_lo >= 4 || count == 0 || count == 1,
+                    "band too narrow ({got_lo}–{got_hi}) for count={count}"
+                );
             }
-            other => panic!("expected Approx, got Exact: {other:?}"),
+            other @ TokenCount::Exact(_) => panic!("expected Approx, got Exact: {other:?}"),
         }
     }
 
@@ -653,7 +664,11 @@ mod tests {
             kind: crate::walk::FileKind::Text,
             tokens: [("ctoc".to_string(), TokenCount::from_approx(1000))].into(),
         };
-        let s = run(".", &[entry], &opts(true, false, false, CountFormat::Single));
+        let s = run(
+            ".",
+            &[entry],
+            &opts(true, false, false, CountFormat::Single),
+        );
         assert!(s.contains('–'), "en-dash missing for approx range:\n{s}");
         assert!(s.contains("957"), "lo bound missing:\n{s}");
         assert!(s.contains("1,043"), "hi bound missing:\n{s}");
