@@ -46,6 +46,7 @@
             pkgs.cargo-edit # cargo add/rm/upgrade commands
             pkgs.cargo-audit # Security vulnerability scanning
             pkgs.cargo-nextest # Faster test runner with better output
+            pkgs.cargo-dist # Binary release packaging
             pkgs.rust-analyzer # Rust language server
             pkgs.just # Command runner
 

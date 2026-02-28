@@ -60,7 +60,7 @@ impl OutputOptions {
 }
 
 /// A token count that is either exact or an approximate range.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum TokenCount {
     /// A precise count from an exact tokenizer.
     Exact(usize),
@@ -88,12 +88,21 @@ impl TokenCount {
         }
     }
 
-    /// Construct an approximate range for a raw count using ±5 %.
+    /// Construct an approximate range for a raw count using ±4.1 % with a
+    /// minimum absolute slack of 2 tokens on each side.
     ///
-    /// `lo = floor(count × 0.95)`, `hi = ceil(count × 1.05)`.
+    /// 4.1 % matches ctoc's claimed error bound (~4 % average across tested
+    /// files).  Our implementation uses optimal DP rather than the greedy
+    /// longest-match in the ctoc CLI, so real-world error should be at or
+    /// below this bound.
+    ///
+    /// The percentage band alone collapses to near-zero for small files, so a
+    /// ±2 token floor is applied: every range is at least 4 tokens wide.
+    ///
+    /// `lo = max(0, floor(count × 0.959) − 2)`, `hi = ceil(count × 1.041) + 2`.
     pub fn from_approx(count: usize) -> Self {
-        let lo = count * 19 / 20;
-        let hi = (count * 21 + 19) / 20;
+        let lo = (count * 959 / 1000).saturating_sub(2);
+        let hi = (count * 1041 + 999) / 1000 + 2;
         Self::Approx { lo, hi }
     }
 
@@ -611,8 +620,8 @@ mod tests {
         };
         let s = run(".", &[entry], &opts(true, false, false, CountFormat::Single));
         assert!(s.contains('–'), "en-dash missing for approx range:\n{s}");
-        assert!(s.contains("950"), "lo bound missing:\n{s}");
-        assert!(s.contains("1,050"), "hi bound missing:\n{s}");
+        assert!(s.contains("957"), "lo bound missing:\n{s}");
+        assert!(s.contains("1,043"), "hi bound missing:\n{s}");
     }
 
     /// `-t o200k` explicit mode → "o200k: N" label.
