@@ -7,11 +7,12 @@ mod resolve;
 mod run;
 
 pub use error::TokenizeError;
+pub use local::{CtocTokenizer, Tokenizer};
 pub use resolve::resolve_tokenizers;
 pub use run::tokenize_entries;
 
 #[cfg(test)]
-use local::{O200kTokenizer, Tokenizer};
+use local::O200kTokenizer;
 
 #[cfg(test)]
 mod tests {

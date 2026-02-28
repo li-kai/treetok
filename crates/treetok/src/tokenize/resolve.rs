@@ -1,6 +1,6 @@
-use super::remote::ClaudeTokenizer;
 use super::error::TokenizeError;
-use super::local::{O200kTokenizer, Tokenizer};
+use super::local::{CtocTokenizer, O200kTokenizer, Tokenizer};
+use super::remote::ClaudeTokenizer;
 
 /// Split tokenizer set: local (synchronous) and optional Claude (async).
 pub struct ResolvedTokenizers {
@@ -28,14 +28,23 @@ pub fn resolve_tokenizers(
 ) -> Result<ResolvedTokenizers, TokenizeError> {
     if explicit.is_empty() {
         // Range mode: use all available tokenizers.
-        let local: Vec<Box<dyn Tokenizer>> = vec![Box::new(O200kTokenizer::new()?)];
+        let mut local: Vec<Box<dyn Tokenizer>> = vec![Box::new(O200kTokenizer::new()?)];
 
         let claude = if offline {
             None
         } else {
             match ClaudeTokenizer::new() {
                 Ok(t) => Some(t),
-                Err(TokenizeError::NoApiKey) => None,
+                Err(TokenizeError::NoApiKey) => {
+                    // No API key: use embedded ctoc as an offline Claude approximation.
+                    eprintln!(
+                        "note: ANTHROPIC_API_KEY not set \u{2014} \
+                         using ctoc (embedded approximation, \u{2248}96\u{a0}% accurate vs Claude API). \
+                         Set ANTHROPIC_API_KEY for exact counts."
+                    );
+                    local.push(Box::new(CtocTokenizer::new()));
+                    None
+                }
                 Err(e) => return Err(e),
             }
         };
@@ -49,6 +58,7 @@ pub fn resolve_tokenizers(
         for name in explicit {
             match name.as_str() {
                 "o200k" => local.push(Box::new(O200kTokenizer::new()?)),
+                "ctoc" => local.push(Box::new(CtocTokenizer::new())),
                 "claude" => {
                     if offline {
                         eprintln!("warning: --offline set, skipping -t claude");
