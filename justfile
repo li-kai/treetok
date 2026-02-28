@@ -100,3 +100,20 @@ check-all:
     just check
     just test
 
+# Download latest ctoc vocab and re-embed it in the treetok binary
+update-ctoc:
+    cargo run -p xtask -- update-ctoc
+
+# Tag and push a release (triggers cargo-dist CI)
+release version:
+    git tag "v{{ version }}"
+    git push origin "v{{ version }}"
+
+# Build binary reproducibly via Nix flake
+build-nix *args:
+    nix --extra-experimental-features nix-command --extra-experimental-features flakes build {{ args }}
+
+# Run the built binary
+run *args:
+    ./result/bin/treetok {{ args }}
+
