@@ -51,6 +51,7 @@ cast_sign_loss = "allow"
 # Enforced best practices
 unwrap_used = "warn"
 expect_used = "warn"
+useless_attribute = "warn"
 
 # Profile configurations - only non-default settings shown
 # Reference: https://doc.rust-lang.org/cargo/guide/build-performance.html
