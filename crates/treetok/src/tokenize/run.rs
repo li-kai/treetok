@@ -4,8 +4,7 @@ use futures::stream::{self, StreamExt};
 
 use super::remote::ClaudeTokenizer;
 use super::resolve::ResolvedTokenizers;
-use super::TokenizerId;
-use crate::output::TokenCount;
+use super::{TokenCount, TokenizerId};
 use crate::walk::FileKind;
 
 /// Tokenize a slice of file entries and return results.

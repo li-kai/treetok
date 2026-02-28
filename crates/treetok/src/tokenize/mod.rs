@@ -10,7 +10,61 @@ pub use error::TokenizeError;
 pub use local::{CtocTokenizer, Tokenizer};
 pub use resolve::{load_api_key, resolve_tokenizers};
 pub use run::tokenize_entries;
+pub use token_count::TokenCount;
 pub use tokenizer_id::TokenizerId;
+
+mod token_count {
+    /// A token count that is either exact or an approximate range.
+    #[derive(Clone, Debug)]
+    pub enum TokenCount {
+        /// A precise count from an exact tokenizer.
+        Exact(usize),
+        /// A [lo, hi] inclusive range from an approximate tokenizer (e.g. ctoc ±5 %).
+        Approx {
+            /// Lower bound of the estimated range.
+            lo: usize,
+            /// Upper bound of the estimated range.
+            hi: usize,
+        },
+    }
+
+    impl TokenCount {
+        /// The lower bound (or exact value).
+        pub(crate) fn lo(&self) -> usize {
+            match self {
+                Self::Exact(n) | Self::Approx { lo: n, .. } => *n,
+            }
+        }
+
+        /// The upper bound (or exact value).
+        pub(crate) fn hi(&self) -> usize {
+            match self {
+                Self::Exact(n) | Self::Approx { hi: n, .. } => *n,
+            }
+        }
+
+        /// Construct an approximate range for a raw count using ±4.1 % with a
+        /// minimum absolute slack of 2 tokens on each side.
+        #[must_use]
+        pub fn from_approx(count: usize) -> Self {
+            let lo = (count * 959 / 1000).saturating_sub(2);
+            let hi = (count * 1041).div_ceil(1000) + 2;
+            Self::Approx { lo, hi }
+        }
+
+        /// Accumulate another count into `self` (same variant assumed).
+        pub(crate) fn add(&mut self, other: &Self) {
+            match (self, other) {
+                (Self::Exact(a), Self::Exact(b)) => *a += b,
+                (Self::Approx { lo: alo, hi: ahi }, Self::Approx { lo: blo, hi: bhi }) => {
+                    *alo += blo;
+                    *ahi += bhi;
+                }
+                _ => {}
+            }
+        }
+    }
+}
 
 mod tokenizer_id {
     use std::fmt;
