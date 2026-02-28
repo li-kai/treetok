@@ -163,7 +163,7 @@ fn all_tokenizer_names(entries: &[FileResult]) -> Vec<String> {
 /// formatted count string across all entries.  The width is also at least as
 /// wide as the tokenizer name itself (for the header row).
 fn max_count_widths(entries: &[FileResult], names: &[String]) -> Vec<usize> {
-    let mut widths: Vec<usize> = names.iter().map(|n| n.chars().count()).collect();
+    let mut widths: Vec<usize> = names.iter().map(|n| display_name(n).chars().count()).collect();
     for e in entries {
         for (i, name) in names.iter().enumerate() {
             if let Some(tc) = e.tokens.get(name) {
@@ -183,6 +183,24 @@ fn format_single_count(tc: &TokenCount) -> String {
             format!("{} \u{2013} ~{}", format_number(*lo), format_number(*hi))
         }
     }
+}
+
+/// Build the pre-formatted column string for a Named tabular file row.
+///
+/// Each column is `"  " + right-aligned count`, matching the header layout
+/// produced by [`write_tree_named`] and the flat Named table.
+fn format_named_columns(
+    tokens: &BTreeMap<String, TokenCount>,
+    names: &[String],
+    widths: &[usize],
+) -> String {
+    use std::fmt::Write as _;
+    let mut s = String::new();
+    for (name, w) in names.iter().zip(widths) {
+        let cell = tokens.get(name).map(format_single_count).unwrap_or_default();
+        write!(s, "  {:>w$}", cell, w = *w).unwrap();
+    }
+    s
 }
 
 // ─── Tree node type ───────────────────────────────────────────────────────────
@@ -239,9 +257,19 @@ fn write_tree(
     entries: &[FileResult],
     opts: &OutputOptions,
 ) -> std::io::Result<()> {
+    if matches!(opts.count_format, CountFormat::Named) {
+        return write_tree_named(out, root_label, entries, opts);
+    }
+
     let name_col = name_col_width(entries);
     let root_display = format_dir_label(root_label, opts.color);
-    let tree = build_tree_node(TreeNode::Dir(root_display), entries, Path::new(""), opts);
+    let tree = build_tree_node(
+        TreeNode::Dir(root_display),
+        entries,
+        Path::new(""),
+        opts,
+        &|file| format_tokens(file, &opts.count_format, opts.color),
+    );
 
     tree.render(out, &|out, prefix_width, node| match node {
         TreeNode::Dir(name) => write!(out, "{name}"),
@@ -255,12 +283,69 @@ fn write_tree(
     Ok(())
 }
 
+fn write_tree_named(
+    out: &mut dyn Write,
+    root_label: &str,
+    entries: &[FileResult],
+    opts: &OutputOptions,
+) -> std::io::Result<()> {
+    let names = all_tokenizer_names(entries);
+    let widths = max_count_widths(entries, &names);
+    let name_col = name_col_width(entries);
+
+    // Header row — blank padding to name_col, then right-aligned column labels.
+    write!(out, "{:<name_col$}", "", name_col = name_col)?;
+    for (name, w) in names.iter().zip(&widths) {
+        write!(out, "  {:>w$}", display_name(name).to_uppercase(), w = w)?;
+    }
+    writeln!(out)?;
+
+    // Build and render the tree.
+    let root_display = format_dir_label(root_label, opts.color);
+    let tree = build_tree_node(
+        TreeNode::Dir(root_display),
+        entries,
+        Path::new(""),
+        opts,
+        &|file| match &file.kind {
+            FileKind::Text => format_named_columns(&file.tokens, &names, &widths),
+            _ => format_tokens(file, &CountFormat::Named, opts.color),
+        },
+    );
+
+    tree.render(out, &|out, prefix_width, node| match node {
+        TreeNode::Dir(name) => write!(out, "{name}"),
+        TreeNode::File { name, counts } => {
+            let pad = name_col.saturating_sub(prefix_width + name.chars().count());
+            write!(out, "{name}{:pad$}{counts}", "", pad = pad)
+        }
+    })?;
+
+    // Totals row.
+    let mut totals: BTreeMap<String, TokenCount> = BTreeMap::new();
+    accumulate_totals(entries, &mut totals);
+    if !totals.is_empty() {
+        write!(out, "\n{:<name_col$}", "TOTAL", name_col = name_col)?;
+        for (name, w) in names.iter().zip(&widths) {
+            let cell = totals.get(name).map(format_single_count).unwrap_or_default();
+            write!(out, "  {:>w$}", cell, w = w)?;
+        }
+        writeln!(out)?;
+    }
+
+    Ok(())
+}
+
 /// Recursively build a `Tree<TreeNode>` for `prefix`.
+///
+/// `fmt_counts` is called for every file leaf to produce the pre-formatted
+/// count string stored in `TreeNode::File::counts`.
 fn build_tree_node(
     label: TreeNode,
     entries: &[FileResult],
     prefix: &Path,
     opts: &OutputOptions,
+    fmt_counts: &dyn Fn(&FileResult) -> String,
 ) -> Tree<TreeNode> {
     let mut files: Vec<&FileResult> = entries
         .iter()
@@ -290,7 +375,7 @@ fn build_tree_node(
     for dir_name in &subdirs {
         let dir_prefix = prefix.join(dir_name);
         let dir_label = TreeNode::Dir(format_dir_label(dir_name, opts.color));
-        node.push(build_tree_node(dir_label, entries, &dir_prefix, opts));
+        node.push(build_tree_node(dir_label, entries, &dir_prefix, opts, fmt_counts));
     }
 
     for file in &files {
@@ -299,7 +384,7 @@ fn build_tree_node(
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| file.rel_path.display().to_string());
-        let counts = format_tokens(file, &opts.count_format, opts.color);
+        let counts = fmt_counts(file);
         node.push(Tree::new(TreeNode::File { name, counts }));
     }
 
@@ -334,7 +419,7 @@ fn write_flat(
             // Header.
             write!(out, "{:<path_w$}", "PATH", path_w = path_w)?;
             for (name, w) in names.iter().zip(&widths) {
-                write!(out, "  {:>w$}", name.to_uppercase(), w = w)?;
+                write!(out, "  {:>w$}", display_name(name).to_uppercase(), w = w)?;
             }
             writeln!(out)?;
 
@@ -585,6 +670,16 @@ fn dim(s: &str, color: bool) -> String {
     if color { s.dimmed().to_string() } else { s.to_string() }
 }
 
+/// Human-readable column label for a tokenizer key.
+fn display_name(key: &str) -> &str {
+    match key {
+        "o200k" => "OpenAI",
+        "claude" => "Claude",
+        "ctoc" => "Claude~",
+        other => other,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use rstest::{fixture, rstest};
@@ -705,7 +800,7 @@ mod tests {
         let entries = [text_result("f.rs", &[("claude", 100), ("o200k", 120)])];
         let s = run(".", &entries, &opts(true, false, false, CountFormat::Named));
         assert!(s.contains("CLAUDE"), "CLAUDE header missing:\n{s}");
-        assert!(s.contains("O200K"), "O200K header missing:\n{s}");
+        assert!(s.contains("OPENAI"), "OPENAI header missing:\n{s}");
     }
 
     #[test]
@@ -797,7 +892,54 @@ mod tests {
         let entries = [text_result("f.rs", &[("o200k", 42)])];
         let s = run(".", &entries, &opts(true, false, false, CountFormat::Named));
         assert!(s.contains("42"), "count missing:\n{s}");
-        assert!(s.contains("O200K") || s.contains("o200k"), "label missing:\n{s}");
+        assert!(s.contains("OPENAI") || s.contains("OpenAI"), "label missing:\n{s}");
+    }
+
+    // ── tree Named tabular mode ────────────────────────────────────────────
+
+    #[test]
+    fn tree_named_tabular_has_header_columns_and_totals() {
+        let entries = [
+            text_result("src/main.rs", &[("o200k", 1_234), ("claude", 1_180)]),
+            text_result("src/lib.rs", &[("o200k", 456), ("claude", 420)]),
+        ];
+        let s = run(".", &entries, &opts(false, false, false, CountFormat::Named));
+        assert!(s.contains("OPENAI"), "OPENAI header missing:\n{s}");
+        assert!(s.contains("CLAUDE"), "CLAUDE header missing:\n{s}");
+        assert!(s.contains("TOTAL"), "TOTAL row missing:\n{s}");
+        assert!(s.contains("1,234"), "count 1,234 missing:\n{s}");
+        assert!(s.contains("1,180"), "count 1,180 missing:\n{s}");
+        // Totals: 1_234 + 456 = 1_690 and 1_180 + 420 = 1_600
+        assert!(s.contains("1,690"), "o200k total missing:\n{s}");
+        assert!(s.contains("1,600"), "claude total missing:\n{s}");
+    }
+
+    #[test]
+    fn tree_named_tabular_columns_aligned() {
+        // Files at different depths — right-aligned columns mean every file
+        // row has the same total display width (right edge is fixed).
+        let entries = [
+            text_result("top.rs", &[("o200k", 1_000)]),
+            text_result("sub/deep.rs", &[("o200k", 999)]),
+        ];
+        let s = run(".", &entries, &opts(false, false, false, CountFormat::Named));
+        // Use char count (not byte length): box-drawing glyphs are 1 display
+        // column but 3 bytes, so chars().count() gives the display width.
+        let line_lengths: Vec<usize> = s
+            .lines()
+            .filter(|l| l.contains(".rs"))
+            .map(|l| l.chars().count())
+            .collect();
+        assert_eq!(line_lengths.len(), 2, "expected 2 file lines:\n{s}");
+        assert_eq!(line_lengths[0], line_lengths[1], "right edges not aligned:\n{s}");
+    }
+
+    #[test]
+    fn display_name_maps_known_tokenizers() {
+        assert_eq!(display_name("o200k"), "OpenAI");
+        assert_eq!(display_name("claude"), "Claude");
+        assert_eq!(display_name("ctoc"), "Claude~");
+        assert_eq!(display_name("other"), "other");
     }
 
     // ── from_approx ────────────────────────────────────────────────────────
