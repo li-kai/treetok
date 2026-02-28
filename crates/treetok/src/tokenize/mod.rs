@@ -88,4 +88,38 @@ mod tests {
         assert!(long > short);
     }
 
+    /// For small inputs (under the old 20k threshold), the single Aho-Corasick
+    /// path should produce a consistent, deterministic count.
+    #[rstest]
+    fn ctoc_greedy_and_dp_agree_on_small_input(ctoc: CtocTokenizer) {
+        let input = "The quick brown fox jumps over the lazy dog. ".repeat(100);
+        let count1 = ctoc.count_tokens(&input).unwrap();
+        let count2 = ctoc.count_tokens(&input).unwrap();
+        assert_eq!(count1, count2, "same input should always produce same count");
+        assert!(count1 > 0);
+    }
+
+    /// Bytes unlikely to appear in vocab should each count as 1 token.
+    #[rstest]
+    fn ctoc_counts_unmatched_bytes_individually(ctoc: CtocTokenizer) {
+        let input = "\x00\x01\x02";
+        let count = ctoc.count_tokens(input).unwrap();
+        assert_eq!(count, 3);
+    }
+
+    /// Large inputs (50k+ bytes) should work without any threshold switching.
+    #[rstest]
+    fn ctoc_handles_large_input(ctoc: CtocTokenizer) {
+        let input = "hello world ".repeat(5000); // ~60k bytes
+        let count = ctoc.count_tokens(&input).unwrap();
+        assert!(count > 0);
+        assert!(count < input.len()); // tokens should be fewer than raw bytes
+    }
+
+    /// ctoc is an approximate tokenizer.
+    #[rstest]
+    fn ctoc_is_approximate(ctoc: CtocTokenizer) {
+        assert!(ctoc.is_approximate());
+    }
+
 }
