@@ -4,20 +4,24 @@ Like `tree`, but shows token counts instead of file sizes. Use it to budget cont
 
 ```console
 $ treetok src/
+                      CLAUDE   OPENAI
 src/
+├── output/
+│   ├── format.rs      5,971    4,770
+│   └── mod.rs         5,289    4,060
 ├── tokenize/
-│   ├── error.rs      [371]
-│   ├── local.rs      [280]
-│   ├── mod.rs        [772]
-│   ├── remote.rs     [966]
-│   ├── resolve.rs    [536]
-│   └── run.rs        [816]
-├── lib.rs            [26]
-├── main.rs           [826]
-├── output.rs       [4,610]
-└── walk.rs         [3,811]
+│   ├── error.rs         473      375
+│   ├── local.rs       1,171      932
+│   ├── mod.rs         2,336    1,830
+│   ├── remote.rs      1,204      907
+│   ├── resolve.rs     2,037    1,593
+│   └── run.rs         1,097      827
+├── lib.rs                44       30
+├── main.rs            1,089      837
+├── tree.rs            3,539    2,719
+└── walk.rs            4,933    3,785
 
-Total: [13,014]
+TOTAL                 29,183   22,869
 ```
 
 ## Installation
@@ -85,7 +89,7 @@ treetok --depth 2 src/
 
 ### Tokenizers
 
-By default, treetok shows a range across available tokenizers. Use `-t` to select one:
+By default, treetok shows all available tokenizers side-by-side. Use `-t` to select one:
 
 | Name | Requires | Notes |
 |------|----------|-------|
