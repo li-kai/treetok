@@ -1,6 +1,6 @@
 use super::error::TokenizeError;
 use super::local::{CtocTokenizer, O200kTokenizer, Tokenizer};
-use super::remote::ClaudeTokenizer;
+use super::remote::{self, ClaudeTokenizer};
 
 /// Split tokenizer set: local (synchronous) and optional Claude (async).
 pub struct ResolvedTokenizers {
@@ -19,35 +19,35 @@ impl ResolvedTokenizers {
 
 /// Decide which tokenizers to activate.
 ///
-/// * `explicit` – names from `-t` flags (empty = use all available).
-/// * `offline`  – if `true`, online tokenizers are skipped even if an API key
-///   is present.
+/// * `explicit`  – names from `-t` flags (empty = use all available).
+/// * `offline`   – if `true`, online tokenizers are skipped even if a key is present.
+/// * `api_key`   – pre-resolved API key (`None` = unavailable or offline).
 pub fn resolve_tokenizers(
     explicit: &[String],
     offline: bool,
+    api_key: Option<String>,
 ) -> Result<ResolvedTokenizers, TokenizeError> {
     if explicit.is_empty() {
         // Range mode: use all available tokenizers.
         let mut local: Vec<Box<dyn Tokenizer>> = vec![Box::new(O200kTokenizer::new()?)];
 
-        let claude = if offline {
-            None
-        } else {
-            match ClaudeTokenizer::new() {
-                Ok(t) => Some(t),
-                Err(TokenizeError::NoApiKey) => {
-                    // No API key: use embedded ctoc as an offline Claude approximation.
-                    eprintln!(
-                        "note: ANTHROPIC_API_KEY not set \u{2014} \
-                         using ctoc (embedded approximation, \u{2248}96\u{a0}% accurate vs Claude API). \
-                         Set ANTHROPIC_API_KEY for exact counts."
-                    );
-                    local.push(Box::new(CtocTokenizer::new()));
-                    None
-                }
-                Err(e) => return Err(e),
+        let claude = match (offline, api_key) {
+            (false, Some(key)) => Some(ClaudeTokenizer::with_key(key)),
+            (false, None) => {
+                eprintln!(
+                    "note: ANTHROPIC_API_KEY not set \u{2014} \
+                     using ctoc (embedded approximation, \u{2248}96\u{a0}% accurate vs Claude API). \
+                     Set ANTHROPIC_API_KEY for exact counts."
+                );
+                None
             }
+            (true, _) => None,
         };
+
+        // Fall back to ctoc whenever the Claude API tokenizer is unavailable.
+        if claude.is_none() {
+            local.push(Box::new(CtocTokenizer::new()));
+        }
 
         Ok(ResolvedTokenizers { local, claude })
     } else {
@@ -59,13 +59,11 @@ pub fn resolve_tokenizers(
             match name.as_str() {
                 "o200k" => local.push(Box::new(O200kTokenizer::new()?)),
                 "ctoc" => local.push(Box::new(CtocTokenizer::new())),
-                "claude" => {
-                    if offline {
-                        eprintln!("warning: --offline set, skipping -t claude");
-                    } else {
-                        claude = Some(ClaudeTokenizer::new()?);
-                    }
-                }
+                "claude" => match (offline, api_key.clone()) {
+                    (true, _) => eprintln!("warning: --offline set, skipping -t claude"),
+                    (false, Some(key)) => claude = Some(ClaudeTokenizer::with_key(key)),
+                    (false, None) => return Err(TokenizeError::NoApiKey),
+                },
                 other => {
                     eprintln!("warning: unknown tokenizer {other:?}, skipping");
                 }
@@ -80,4 +78,12 @@ pub fn resolve_tokenizers(
 
         Ok(ResolvedTokenizers { local, claude })
     }
+}
+
+/// Load the API key from the environment for use with [`resolve_tokenizers`].
+///
+/// Prefers `TREETOK_API_KEY` over `ANTHROPIC_API_KEY`; returns `None` if
+/// neither is set.
+pub fn load_api_key() -> Option<String> {
+    remote::load_api_key().ok()
 }

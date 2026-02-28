@@ -37,20 +37,19 @@ fn select_api_key(
 }
 
 /// Load API key from environment, preferring `TREETOK_API_KEY` over `ANTHROPIC_API_KEY`.
-fn load_api_key() -> Result<String, TokenizeError> {
+pub(crate) fn load_api_key() -> Result<String, TokenizeError> {
     let preferred = std::env::var("TREETOK_API_KEY").ok();
     let fallback = std::env::var("ANTHROPIC_API_KEY").ok();
     select_api_key(preferred, fallback)
 }
 
 impl ClaudeTokenizer {
-    /// Create a new tokenizer.  Returns `Err(TokenizeError::NoApiKey)` if
-    /// neither `TREETOK_API_KEY` nor `ANTHROPIC_API_KEY` is set.
-    /// Prefers `TREETOK_API_KEY` if both are set.
-    pub fn new() -> Result<Self, TokenizeError> {
-        let api_key = load_api_key()?;
-        let client = reqwest::Client::new();
-        Ok(Self { api_key, client })
+    /// Create a tokenizer from an already-resolved API key.
+    pub fn with_key(api_key: String) -> Self {
+        Self {
+            api_key,
+            client: reqwest::Client::new(),
+        }
     }
 
     /// Count tokens via the Anthropic API (async, with retry on 429).
