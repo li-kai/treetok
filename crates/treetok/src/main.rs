@@ -60,7 +60,8 @@ fn main() {
     let cli = Cli::parse();
 
     // Resolve tokenizers.
-    let resolved = match tokenize::resolve_tokenizers(&cli.tokenizers, cli.offline) {
+    let api_key = if cli.offline { None } else { tokenize::load_api_key() };
+    let resolved = match tokenize::resolve_tokenizers(&cli.tokenizers, cli.offline, api_key) {
         Ok(t) => t,
         Err(tokenize::TokenizeError::NoApiKey) => {
             eprintln!("error: ANTHROPIC_API_KEY is not set (required by -t claude)");

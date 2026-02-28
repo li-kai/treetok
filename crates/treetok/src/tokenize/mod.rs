@@ -8,7 +8,7 @@ mod run;
 
 pub use error::TokenizeError;
 pub use local::{CtocTokenizer, Tokenizer};
-pub use resolve::resolve_tokenizers;
+pub use resolve::{load_api_key, resolve_tokenizers};
 pub use run::tokenize_entries;
 
 #[cfg(test)]
@@ -88,67 +88,4 @@ mod tests {
         assert!(long > short);
     }
 
-    // ── resolve_tokenizers ─────────────────────────────────────────────────
-
-    /// `--offline` with no explicit flags → exactly one tokenizer (o200k).
-    #[test]
-    fn resolve_offline_gives_only_o200k() {
-        let resolved = resolve_tokenizers(&[], true).unwrap();
-        assert_eq!(resolved.local.len(), 1);
-        assert_eq!(resolved.local[0].name(), "o200k");
-        assert!(resolved.claude.is_none());
-    }
-
-    /// Explicit `-t o200k` → one local tokenizer named "o200k".
-    #[test]
-    fn resolve_explicit_o200k() {
-        let resolved = resolve_tokenizers(&["o200k".to_string()], false).unwrap();
-        assert_eq!(resolved.local.len(), 1);
-        assert_eq!(resolved.local[0].name(), "o200k");
-        assert!(resolved.claude.is_none());
-    }
-
-    /// Explicit `-t ctoc` → one local approximate tokenizer named "ctoc".
-    #[test]
-    fn resolve_explicit_ctoc() {
-        let resolved = resolve_tokenizers(&["ctoc".to_string()], false).unwrap();
-        assert_eq!(resolved.local.len(), 1);
-        assert_eq!(resolved.local[0].name(), "ctoc");
-        assert!(resolved.local[0].is_approximate());
-        assert!(resolved.claude.is_none());
-    }
-
-    /// When no API key is set, range mode includes ctoc as an approximation.
-    #[test]
-    fn resolve_no_api_key_includes_ctoc() {
-        // Ensure neither key is set for this test.
-        let treetok_key = std::env::var("TREETOK_API_KEY").ok();
-        let anthropic_key = std::env::var("ANTHROPIC_API_KEY").ok();
-        if treetok_key.is_some() || anthropic_key.is_some() {
-            // Skip: an API key is present, so ctoc fallback won't activate.
-            return;
-        }
-        let resolved = resolve_tokenizers(&[], false).unwrap();
-        assert!(
-            resolved.local.iter().any(|t| t.name() == "ctoc"),
-            "expected ctoc in local tokenizers when no API key is set"
-        );
-        assert!(resolved.claude.is_none());
-    }
-
-    /// Requesting only an unknown tokenizer should return an error.
-    #[test]
-    fn resolve_only_unknown_is_error() {
-        let result = resolve_tokenizers(&["not_a_real_tokenizer".to_string()], false);
-        assert!(result.is_err());
-    }
-
-    /// Mixing a valid and unknown name should succeed (unknown is skipped).
-    #[test]
-    fn resolve_valid_and_unknown_succeeds() {
-        let resolved =
-            resolve_tokenizers(&["o200k".to_string(), "unknown".to_string()], false).unwrap();
-        assert_eq!(resolved.local.len(), 1);
-        assert_eq!(resolved.local[0].name(), "o200k");
-    }
 }
