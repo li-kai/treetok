@@ -21,9 +21,10 @@
       system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
+        fenixPkgs = fenix.packages.${system};
         # Fenix Rust toolchain - use complete with targets
         rustToolchain =
-          with fenix.packages.${system};
+          with fenixPkgs;
           combine [
             stable.rustc
             stable.cargo
@@ -32,8 +33,28 @@
             stable.rust-src
             targets.wasm32-unknown-unknown.stable.rust-std
           ];
+        rustPlatform = pkgs.makeRustPlatform {
+          cargo = fenixPkgs.stable.cargo;
+          rustc = fenixPkgs.stable.rustc;
+        };
       in
       {
+        packages.default = rustPlatform.buildRustPackage {
+          pname = "treetok";
+          version = "0.1.2";
+          src = ./.;
+          cargoLock.lockFile = ./Cargo.lock;
+          cargoBuildFlags = [ "--package" "treetok" ];
+          nativeBuildInputs = with pkgs; [ pkg-config ];
+          buildInputs =
+            with pkgs;
+            [ openssl ]
+            ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
+              pkgs.darwin.apple_sdk.frameworks.Security
+              pkgs.darwin.apple_sdk.frameworks.SystemConfiguration
+            ];
+        };
+
         devShells.default = pkgs.mkShell {
           name = "dev-environment";
 
