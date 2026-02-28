@@ -78,12 +78,10 @@ fn main() {
     };
 
     // Determine count format.
-    let count_format = if !cli.tokenizers.is_empty() {
-        CountFormat::Named
-    } else if resolved.count() == 1 {
+    let count_format = if resolved.count() == 1 {
         CountFormat::Single
     } else {
-        CountFormat::Range
+        CountFormat::Named
     };
 
     // Build output options (encapsulates color detection).
