@@ -36,34 +36,12 @@ Multiple paths supported. Defaults to `.` if none given.
 
 ## Output
 
-Default (range mode):
-```
-src/
-├── main.rs        [1,178 – 1,234]
-├── lib.rs         [845 – 892]
-└── image.png      [binary]
+See [README.md](README.md) for output format examples.
 
-Total: [2,023 – 2,126]
-```
-
-With `-t claude -t o200k`:
-```
-src/
-├── main.rs        [claude: 1,234  o200k: 1,178]
-├── lib.rs         [claude: 892    o200k: 845]
-└── image.png      [binary]
-
-Total: [claude: 2,126  o200k: 2,023]
-```
-
-Flat mode (`--flat`):
-```
-src/main.rs        [1,178 – 1,234]
-src/lib.rs         [845 – 892]
-src/image.png      [binary]
-
-Total: [2,023 – 2,126]
-```
+Supported modes:
+- **Default (range mode)**: Shows min–max token count range across available tokenizers
+- **Named mode** (`-t <name>`): Shows exact counts for specified tokenizers (repeatable for side-by-side)
+- **Flat mode** (`--flat`): Flat file list with full paths instead of tree structure
 
 ### Range mode tokenizer set
 
@@ -156,11 +134,12 @@ treetok --json | jq
 
 | Name | Method |
 |---|---|
+| `gemini` | embed Gemma 3 `tokenizer.json` at compile time (`include_bytes!` + `tokenizers` crate); sourced via `cargo xtask update-gemini`. Covers all current Gemini models (shared vocab, 262 144 tokens). |
 | `qwen` | `tokenizers` crate (HuggingFace `tokenizer.json`) |
 | `glm` | `tokenizers` crate (HuggingFace `tokenizer.json`) |
 | `kimi` | `tiktoken-rs` via `CoreBPE::new()` |
 
-HuggingFace tokenizers are ~20 MB each. V2 will download on first use to `~/.cache/treetok/`.
+The Gemma 3 tokenizer file is ~5 MB (Apache-2.0). `qwen`/`glm` tokenizers are ~20 MB each. Unlike `qwen`/`glm`, `gemini` embeds the vocab at compile time (same pattern as `ctoc`) so no download-on-first-use infrastructure is needed for it.
 
 ### Claude API details
 
@@ -209,7 +188,7 @@ Uses `exitcode` crate (sysexits.h conventions):
 |---|---|
 | CLI | `clap` (derive) |
 | Directory walking | `ignore` |
-| Tree rendering | `termtree` |
+| Tree rendering | `termtree` (custom fork) |
 | OpenAI tokenizer | `tiktoken-rs` |
 | Async runtime | `tokio` |
 | HTTP (Claude API) | `reqwest` |
