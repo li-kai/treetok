@@ -237,8 +237,8 @@ mod tests {
     fn flat_named_has_header_row() {
         let entries = [text_result("f.rs", &[("claude", 100), ("o200k", 120)])];
         let s = run(".", &entries, &opts(true, false, false, CountFormat::Named));
-        assert!(s.contains("CLAUDE"), "CLAUDE header missing:\n{s}");
-        assert!(s.contains("OPENAI"), "OPENAI header missing:\n{s}");
+        assert!(s.contains("Claude"), "Claude header missing:\n{s}");
+        assert!(s.contains("OpenAI"), "OpenAI header missing:\n{s}");
     }
 
     #[test]
@@ -330,7 +330,7 @@ mod tests {
         let entries = [text_result("f.rs", &[("o200k", 42)])];
         let s = run(".", &entries, &opts(true, false, false, CountFormat::Named));
         assert!(s.contains("42"), "count missing:\n{s}");
-        assert!(s.contains("OPENAI") || s.contains("OpenAI"), "label missing:\n{s}");
+        assert!(s.contains("OpenAI"), "label missing:\n{s}");
     }
 
     // ── tree Named tabular mode ────────────────────────────────────────────
@@ -342,8 +342,8 @@ mod tests {
             text_result("src/lib.rs", &[("o200k", 456), ("claude", 420)]),
         ];
         let s = run(".", &entries, &opts(false, false, false, CountFormat::Named));
-        assert!(s.contains("OPENAI"), "OPENAI header missing:\n{s}");
-        assert!(s.contains("CLAUDE"), "CLAUDE header missing:\n{s}");
+        assert!(s.contains("OpenAI"), "OpenAI header missing:\n{s}");
+        assert!(s.contains("Claude"), "Claude header missing:\n{s}");
         assert!(s.contains("TOTAL"), "TOTAL row missing:\n{s}");
         assert!(s.contains("1,234"), "count 1,234 missing:\n{s}");
         assert!(s.contains("1,180"), "count 1,180 missing:\n{s}");

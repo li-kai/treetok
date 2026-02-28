@@ -4,7 +4,7 @@ Like `tree`, but shows token counts instead of file sizes. Use it to budget cont
 
 ```console
 $ treetok src/
-                      CLAUDE   OPENAI
+                      Claude   OpenAI
 src/
 ├── output/
 │   ├── format.rs      5,971    4,770

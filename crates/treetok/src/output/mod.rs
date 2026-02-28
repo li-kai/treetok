@@ -222,7 +222,7 @@ fn write_tree_named(
     // Header row — blank padding to name_col, then right-aligned column labels.
     write!(out, "{:<name_col$}", "", name_col = name_col)?;
     for (id, w) in ids.iter().zip(&widths) {
-        write!(out, "  {:>w$}", id.to_string().to_uppercase(), w = w)?;
+        write!(out, "  {:>w$}", id, w = w)?;
     }
     writeln!(out)?;
 
@@ -345,7 +345,7 @@ fn write_flat(
             // Header.
             write!(out, "{:<path_w$}", "PATH", path_w = path_w)?;
             for (id, w) in ids.iter().zip(&widths) {
-                write!(out, "  {:>w$}", id.to_string().to_uppercase(), w = w)?;
+                write!(out, "  {:>w$}", id, w = w)?;
             }
             writeln!(out)?;
 
