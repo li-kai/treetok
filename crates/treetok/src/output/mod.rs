@@ -3,8 +3,10 @@
 mod format;
 
 pub use format::format_number;
-use format::{format_counts, format_dir_label, format_named_columns, format_single_count,
-             format_tokens};
+use format::{
+    ColLayout, format_counts, format_dir_label, format_named_columns, format_named_header,
+    format_tokens,
+};
 
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -117,20 +119,49 @@ fn all_tokenizer_ids(entries: &[FileResult]) -> Vec<TokenizerId> {
     ids.into_iter().collect()
 }
 
-/// For each tokenizer (in `ids` order), the maximum display width of its
-/// formatted count string across all entries.  The width is also at least as
-/// wide as the tokenizer's display name (for the header row).
-fn max_count_widths(entries: &[FileResult], ids: &[TokenizerId]) -> Vec<usize> {
-    let mut widths: Vec<usize> = ids.iter().map(|id| id.to_string().chars().count()).collect();
+/// Compute per-column sub-layouts (`lo_w`, `hi_w`) across all entries *and* totals,
+/// so that approximate ranges can be sub-aligned across rows.
+fn compute_col_layouts(
+    entries: &[FileResult],
+    ids: &[TokenizerId],
+    totals: &BTreeMap<TokenizerId, TokenCount>,
+) -> Vec<ColLayout> {
+    let mut layouts: Vec<ColLayout> = ids.iter().map(|_| ColLayout::default()).collect();
+
+    // Helper: widen layout[i] for a single TokenCount.
+    let mut observe = |i: usize, tc: &TokenCount| match tc {
+        TokenCount::Exact(n) => {
+            layouts[i].lo_w = layouts[i].lo_w.max(format_number(*n).chars().count());
+        }
+        TokenCount::Approx { lo, hi } => {
+            layouts[i].lo_w = layouts[i].lo_w.max(format_number(*lo).chars().count());
+            layouts[i].hi_w = layouts[i].hi_w.max(format_number(*hi).chars().count());
+        }
+    };
+
     for e in entries {
         for (i, id) in ids.iter().enumerate() {
             if let Some(tc) = e.tokens.get(id) {
-                let w = format_single_count(tc).chars().count();
-                widths[i] = widths[i].max(w);
+                observe(i, tc);
             }
         }
     }
-    widths
+    // Include totals so the TOTAL row also fits.
+    for (i, id) in ids.iter().enumerate() {
+        if let Some(tc) = totals.get(id) {
+            observe(i, tc);
+        }
+    }
+
+    // Ensure total width is at least as wide as the header label.
+    for (i, id) in ids.iter().enumerate() {
+        let label_w = id.to_string().chars().count();
+        let total = layouts[i].total_width();
+        if total < label_w {
+            layouts[i].lo_w += label_w - total;
+        }
+    }
+    layouts
 }
 
 // ─── Tree node type ───────────────────────────────────────────────────────────
@@ -169,11 +200,10 @@ fn name_col_width(entries: &[FileResult]) -> usize {
         .map(|e| {
             let depth = e.rel_path.components().count();
             let prefix_w = 4 * depth;
-            let name_w = e
-                .rel_path
-                .file_name()
-                .map(|n| n.to_string_lossy().chars().count())
-                .unwrap_or_else(|| e.rel_path.display().to_string().chars().count());
+            let name_w = e.rel_path.file_name().map_or_else(
+                || e.rel_path.display().to_string().chars().count(),
+                |n| n.to_string_lossy().chars().count(),
+            );
             prefix_w + name_w
         })
         .max()
@@ -216,15 +246,14 @@ fn write_tree_named(
     opts: &OutputOptions,
 ) -> std::io::Result<()> {
     let ids = all_tokenizer_ids(entries);
-    let widths = max_count_widths(entries, &ids);
+    let mut totals: BTreeMap<TokenizerId, TokenCount> = BTreeMap::new();
+    accumulate_totals(entries, &mut totals);
+    let layouts = compute_col_layouts(entries, &ids, &totals);
     let name_col = name_col_width(entries);
 
     // Header row — blank padding to name_col, then right-aligned column labels.
-    write!(out, "{:<name_col$}", "", name_col = name_col)?;
-    for (id, w) in ids.iter().zip(&widths) {
-        write!(out, "  {:>w$}", id, w = w)?;
-    }
-    writeln!(out)?;
+    let header_cols = format_named_header(&ids, &layouts);
+    writeln!(out, "{:<name_col$}{header_cols}", "", name_col = name_col)?;
 
     // Build and render the tree.
     let root_display = format_dir_label(root_label, opts.color);
@@ -234,7 +263,7 @@ fn write_tree_named(
         Path::new(""),
         opts,
         &|file| match &file.kind {
-            FileKind::Text => format_named_columns(&file.tokens, &ids, &widths),
+            FileKind::Text => format_named_columns(&file.tokens, &ids, &layouts),
             _ => format_tokens(file, &CountFormat::Named, opts.color),
         },
     );
@@ -248,15 +277,9 @@ fn write_tree_named(
     })?;
 
     // Totals row.
-    let mut totals: BTreeMap<TokenizerId, TokenCount> = BTreeMap::new();
-    accumulate_totals(entries, &mut totals);
     if !totals.is_empty() {
-        write!(out, "\n{:<name_col$}", "TOTAL", name_col = name_col)?;
-        for (id, w) in ids.iter().zip(&widths) {
-            let cell = totals.get(id).map(format_single_count).unwrap_or_default();
-            write!(out, "  {:>w$}", cell, w = w)?;
-        }
-        writeln!(out)?;
+        let total_cols = format_named_columns(&totals, &ids, &layouts);
+        writeln!(out, "\n{TOTAL_LABEL:<name_col$}{total_cols}")?;
     }
 
     Ok(())
@@ -301,15 +324,20 @@ fn build_tree_node(
     for dir_name in &subdirs {
         let dir_prefix = prefix.join(dir_name);
         let dir_label = TreeNode::Dir(format_dir_label(dir_name, opts.color));
-        node.push(build_tree_node(dir_label, entries, &dir_prefix, opts, fmt_counts));
+        node.push(build_tree_node(
+            dir_label,
+            entries,
+            &dir_prefix,
+            opts,
+            fmt_counts,
+        ));
     }
 
     for file in &files {
-        let name = file
-            .rel_path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| file.rel_path.display().to_string());
+        let name = file.rel_path.file_name().map_or_else(
+            || file.rel_path.display().to_string(),
+            |n| n.to_string_lossy().into_owned(),
+        );
         let counts = fmt_counts(file);
         node.push(Tree::new(TreeNode::File { name, counts }));
     }
@@ -334,69 +362,43 @@ fn write_flat(
         .map(|e| e.rel_path.display().to_string().chars().count())
         .max()
         .unwrap_or(0)
-        .max(4); // at least wide enough for "PATH"
+        .max(TOTAL_LABEL.len()); // at least wide enough for "PATH" header and total label
 
-    match &opts.count_format {
-        // Named format: emit a proper multi-column table with a header row.
-        CountFormat::Named => {
-            let ids = all_tokenizer_ids(entries);
-            let widths = max_count_widths(entries, &ids);
+    if matches!(&opts.count_format, CountFormat::Named) {
+        let ids = all_tokenizer_ids(entries);
+        let mut totals: BTreeMap<TokenizerId, TokenCount> = BTreeMap::new();
+        accumulate_totals(entries, &mut totals);
+        let layouts = compute_col_layouts(entries, &ids, &totals);
 
-            // Header.
-            write!(out, "{:<path_w$}", "PATH", path_w = path_w)?;
-            for (id, w) in ids.iter().zip(&widths) {
-                write!(out, "  {:>w$}", id, w = w)?;
-            }
-            writeln!(out)?;
+        // Header.
+        let header_cols = format_named_header(&ids, &layouts);
+        writeln!(out, "{:<path_w$}{header_cols}", "PATH", path_w = path_w)?;
 
-            // Rows.
-            for entry in &sorted {
-                let path_str = entry.rel_path.display().to_string();
-                match &entry.kind {
-                    FileKind::Text => {
-                        write!(out, "{path_str:<path_w$}", path_w = path_w)?;
-                        for (id, w) in ids.iter().zip(&widths) {
-                            let cell = entry
-                                .tokens
-                                .get(id)
-                                .map(format_single_count)
-                                .unwrap_or_default();
-                            write!(out, "  {:>w$}", cell, w = w)?;
-                        }
-                        writeln!(out)?;
-                    }
-                    _ => {
-                        let label = format_tokens(entry, &opts.count_format, opts.color);
-                        writeln!(out, "{path_str:<path_w$}  {label}", path_w = path_w)?;
-                    }
-                }
-            }
-
-            // Totals row.
-            let mut totals: BTreeMap<TokenizerId, TokenCount> = BTreeMap::new();
-            accumulate_totals(entries, &mut totals);
-            if !totals.is_empty() {
-                write!(out, "\n{:<path_w$}", "TOTAL", path_w = path_w)?;
-                for (id, w) in ids.iter().zip(&widths) {
-                    let cell = totals
-                        .get(id)
-                        .map(format_single_count)
-                        .unwrap_or_default();
-                    write!(out, "  {:>w$}", cell, w = w)?;
-                }
-                writeln!(out)?;
+        // Rows.
+        for entry in &sorted {
+            let path_str = entry.rel_path.display().to_string();
+            if matches!(&entry.kind, FileKind::Text) {
+                let cols = format_named_columns(&entry.tokens, &ids, &layouts);
+                writeln!(out, "{path_str:<path_w$}{cols}")?;
+            } else {
+                let label = format_tokens(entry, &opts.count_format, opts.color);
+                writeln!(out, "{path_str:<path_w$}  {label}")?;
             }
         }
 
+        // Totals row.
+        if !totals.is_empty() {
+            let total_cols = format_named_columns(&totals, &ids, &layouts);
+            writeln!(out, "\n{TOTAL_LABEL:<path_w$}{total_cols}")?;
+        }
+    } else {
         // Single / Range: align the count block start to a fixed column.
-        _ => {
-            for entry in &sorted {
-                let path_str = entry.rel_path.display().to_string();
-                let count_str = format_tokens(entry, &opts.count_format, opts.color);
-                writeln!(out, "{path_str:<path_w$}  {count_str}", path_w = path_w)?;
-            }
-            write_totals(out, entries, opts)?;
+        for entry in &sorted {
+            let path_str = entry.rel_path.display().to_string();
+            let count_str = format_tokens(entry, &opts.count_format, opts.color);
+            writeln!(out, "{path_str:<path_w$}  {count_str}")?;
         }
+        write_totals(out, entries, opts)?;
     }
 
     Ok(())
@@ -489,6 +491,9 @@ fn write_json(
 
 // ─── Totals ───────────────────────────────────────────────────────────────────
 
+/// Label used for the totals row in tabular output.
+const TOTAL_LABEL: &str = "Total";
+
 fn accumulate_totals(entries: &[FileResult], totals: &mut BTreeMap<TokenizerId, TokenCount>) {
     for entry in entries {
         for (name, count) in &entry.tokens {
@@ -517,5 +522,5 @@ fn write_totals(
     }
 
     let total_str = format_counts(&totals, &opts.count_format);
-    writeln!(out, "\nTotal: [{total_str}]")
+    writeln!(out, "\n{TOTAL_LABEL}: [{total_str}]")
 }

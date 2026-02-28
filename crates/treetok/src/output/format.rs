@@ -9,6 +9,55 @@ use crate::walk::FileKind;
 
 use super::{CountFormat, FileResult, TokenCount};
 
+/// Layout info for one Named tabular column, tracking lo/hi sub-widths
+/// so that approximate ranges can be sub-aligned across rows.
+#[derive(Default)]
+pub(super) struct ColLayout {
+    /// Max char-width of the lo part (or exact value) across all rows.
+    pub lo_w: usize,
+    /// Max char-width of the hi part across all rows. 0 if column has no Approx values.
+    pub hi_w: usize,
+}
+
+impl ColLayout {
+    /// Total display width of the widest cell.
+    pub fn total_width(&self) -> usize {
+        if self.hi_w > 0 {
+            self.lo_w + 3 + self.hi_w // 3 for " – "
+        } else {
+            self.lo_w
+        }
+    }
+}
+
+/// Format a single `TokenCount` for a Named tabular cell, aligning lo/hi parts independently.
+pub(super) fn format_count_cell(tc: &TokenCount, layout: &ColLayout) -> String {
+    if layout.hi_w > 0 {
+        // Column has approx values — sub-align
+        match tc {
+            TokenCount::Approx { lo, hi } => {
+                let lo_s = format_number(*lo);
+                let hi_s = format_number(*hi);
+                format!(
+                    "{:>lo_w$} \u{2013} {:>hi_w$}",
+                    lo_s,
+                    hi_s,
+                    lo_w = layout.lo_w,
+                    hi_w = layout.hi_w
+                )
+            }
+            TokenCount::Exact(n) => {
+                // Right-align exact value to total column width
+                let s = format_number(*n);
+                format!("{:>w$}", s, w = layout.total_width())
+            }
+        }
+    } else {
+        let s = format_single_count(tc);
+        format!("{:>w$}", s, w = layout.total_width())
+    }
+}
+
 /// Format a number with thousands separators (commas).
 #[must_use]
 pub fn format_number(n: usize) -> String {
@@ -30,25 +79,40 @@ pub(super) fn format_single_count(tc: &TokenCount) -> String {
     match tc {
         TokenCount::Exact(n) => format_number(*n),
         TokenCount::Approx { lo, hi } => {
-            format!("{} \u{2013} ~{}", format_number(*lo), format_number(*hi))
+            format!("{} \u{2013} {}", format_number(*lo), format_number(*hi))
         }
     }
 }
 
-/// Build the pre-formatted column string for a Named tabular file row.
+/// Build the pre-formatted column string for a Named tabular row.
 ///
-/// Each column is `"  " + right-aligned count`, matching the header layout
-/// produced by `write_tree_named` and the flat Named table.
+/// Each column is `"  " + sub-aligned count`, matching the header layout.
+/// Works for both data rows and the TOTAL row.
 pub(super) fn format_named_columns(
     tokens: &BTreeMap<TokenizerId, TokenCount>,
     ids: &[TokenizerId],
-    widths: &[usize],
+    layouts: &[ColLayout],
 ) -> String {
     use std::fmt::Write as _;
     let mut s = String::new();
-    for (id, w) in ids.iter().zip(widths) {
-        let cell = tokens.get(id).map(format_single_count).unwrap_or_default();
-        write!(s, "  {:>w$}", cell, w = *w).unwrap();
+    for (id, layout) in ids.iter().zip(layouts) {
+        let cell = tokens.get(id).map_or_else(
+            || format!("{:>w$}", "", w = layout.total_width()),
+            |tc| format_count_cell(tc, layout),
+        );
+        let _ = write!(s, "  {cell}");
+    }
+    s
+}
+
+/// Build the header column string for a Named tabular table.
+///
+/// Each column is `"  " + right-aligned tokenizer label`.
+pub(super) fn format_named_header(ids: &[TokenizerId], layouts: &[ColLayout]) -> String {
+    use std::fmt::Write as _;
+    let mut s = String::new();
+    for (id, layout) in ids.iter().zip(layouts) {
+        let _ = write!(s, "  {:>w$}", id, w = layout.total_width());
     }
     s
 }
@@ -66,7 +130,11 @@ pub(super) fn format_counts(
             .map(|(name, count)| match count {
                 TokenCount::Exact(n) => format!("{name}: {}", format_number(*n)),
                 TokenCount::Approx { lo, hi } => {
-                    format!("{name}: {} \u{2013} {}", format_number(*lo), format_number(*hi))
+                    format!(
+                        "{name}: {} \u{2013} {}",
+                        format_number(*lo),
+                        format_number(*hi)
+                    )
                 }
             })
             .collect::<Vec<_>>()
@@ -81,12 +149,18 @@ pub(super) fn format_counts(
         CountFormat::Range => {
             let min = counts.values().map(TokenCount::lo).min().unwrap_or(0);
             let max = counts.values().map(TokenCount::hi).max().unwrap_or(0);
-            let approx = counts.values().any(|tc| matches!(tc, TokenCount::Approx { .. }));
+            let approx = counts
+                .values()
+                .any(|tc| matches!(tc, TokenCount::Approx { .. }));
             let tilde = if approx { "~" } else { "" };
             if min == max {
                 format!("{tilde}{}", format_number(min))
             } else {
-                format!("{} \u{2013} {tilde}{}", format_number(min), format_number(max))
+                format!(
+                    "{} \u{2013} {tilde}{}",
+                    format_number(min),
+                    format_number(max)
+                )
             }
         }
     }
@@ -107,11 +181,19 @@ pub(super) fn format_dir_label(name: &str, color: bool) -> String {
     } else {
         format!("{name}/")
     };
-    if color { display.bold().to_string() } else { display }
+    if color {
+        display.bold().to_string()
+    } else {
+        display
+    }
 }
 
 fn dim(s: &str, color: bool) -> String {
-    if color { s.dimmed().to_string() } else { s.to_string() }
+    if color {
+        s.dimmed().to_string()
+    } else {
+        s.to_string()
+    }
 }
 
 #[cfg(test)]
@@ -120,9 +202,9 @@ mod tests {
 
     use rstest::{fixture, rstest};
 
-    use crate::tokenize::TokenizerId;
-    use super::format_number;
     use super::super::{CountFormat, FileResult, OutputOptions, TokenCount, write_output};
+    use super::format_number;
+    use crate::tokenize::TokenizerId;
 
     // ── fixtures and helpers ───────────────────────────────────────────────
 
@@ -145,8 +227,27 @@ mod tests {
         }
     }
 
+    /// One file with approx (Ctoc) and exact (O200k) columns — used by alignment tests.
+    fn approx_entry() -> FileResult {
+        FileResult {
+            rel_path: "f.rs".into(),
+            kind: crate::walk::FileKind::Text,
+            tokens: [
+                (TokenizerId::Ctoc, TokenCount::from_approx(6_000)),
+                (TokenizerId::O200k, TokenCount::Exact(4_754)),
+            ]
+            .into(),
+        }
+    }
+
     fn opts(flat: bool, json: bool, sort: bool, count_format: CountFormat) -> OutputOptions {
-        OutputOptions { flat, json, sort, color: false, count_format }
+        OutputOptions {
+            flat,
+            json,
+            sort,
+            color: false,
+            count_format,
+        }
     }
 
     /// Flat, single-tokenizer, unsorted — the most common test configuration.
@@ -248,7 +349,7 @@ mod tests {
             text_result("b.rs", &[("o200k", 200)]),
         ];
         let s = run(".", &entries, &opts(true, false, false, CountFormat::Named));
-        assert!(s.contains("TOTAL"), "TOTAL row missing:\n{s}");
+        assert!(s.contains("Total"), "Total row missing:\n{s}");
         assert!(s.contains("300"), "total count missing:\n{s}");
     }
 
@@ -260,7 +361,10 @@ mod tests {
             text_result("b.rs", &[("o200k", 1_234)]),
         ];
         let s = run(".", &entries, &opts(true, false, false, CountFormat::Named));
-        assert!(s.contains("   42") || s.contains("  42"), "right-align missing:\n{s}");
+        assert!(
+            s.contains("   42") || s.contains("  42"),
+            "right-align missing:\n{s}"
+        );
     }
 
     // ── range mode ─────────────────────────────────────────────────────────
@@ -335,16 +439,139 @@ mod tests {
 
     // ── tree Named tabular mode ────────────────────────────────────────────
 
+    /// Return the 0-based **display column** (char index) of the first
+    /// occurrence of `needle` in `haystack`, or `None` if absent.
+    fn char_col(haystack: &str, needle: &str) -> Option<usize> {
+        let byte_pos = haystack.find(needle)?;
+        Some(haystack[..byte_pos].chars().count())
+    }
+
+    /// End column (exclusive) of `needle` in `haystack`, counted in chars.
+    fn char_end_col(haystack: &str, needle: &str) -> Option<usize> {
+        Some(char_col(haystack, needle)? + needle.chars().count())
+    }
+
+    #[test]
+    fn tree_named_header_labels_right_aligned() {
+        // Right-aligned header labels must share the same right edge as the
+        // right-aligned data values in each column.  The en-dash in approx
+        // ranges is multi-byte (3 bytes) but single-char, so alignment must
+        // use char counts, not byte offsets.
+        let entries = [approx_entry()];
+        let s = run(
+            ".",
+            &entries,
+            &opts(false, false, false, CountFormat::Named),
+        );
+
+        let header = s.lines().next().unwrap();
+        let data_row = s.lines().find(|l| l.contains("f.rs")).unwrap();
+
+        // First column: "Claude~" right edge == "6,248" right edge.
+        let h1 = char_end_col(header, "Claude~").expect("Claude~ not in header");
+        let d1 = char_end_col(data_row, "6,248").expect("6,248 not in data row");
+        assert_eq!(
+            h1, d1,
+            "first column right edges differ (header {h1} vs data {d1}).\n\
+             header:   {header}\n\
+             data row: {data_row}"
+        );
+
+        // Second column: "OpenAI" right edge == "4,754" right edge.
+        let h2 = char_end_col(header, "OpenAI").expect("OpenAI not in header");
+        let d2 = char_end_col(data_row, "4,754").expect("4,754 not in data row");
+        assert_eq!(
+            h2, d2,
+            "second column right edges differ (header {h2} vs data {d2}).\n\
+             header:   {header}\n\
+             data row: {data_row}"
+        );
+    }
+
+    #[test]
+    fn flat_named_header_labels_right_aligned() {
+        // Same right-alignment check for flat output.
+        let entries = [approx_entry()];
+        let s = run(".", &entries, &opts(true, false, false, CountFormat::Named));
+
+        let header = s.lines().next().unwrap();
+        let data_row = s.lines().find(|l| l.contains("f.rs")).unwrap();
+
+        let h1 = char_end_col(header, "Claude~").expect("Claude~ not in header");
+        let d1 = char_end_col(data_row, "6,248").expect("6,248 not in data row");
+        assert_eq!(
+            h1, d1,
+            "first column right edges differ (header {h1} vs data {d1}).\n\
+             header:   {header}\n\
+             data row: {data_row}"
+        );
+
+        let h2 = char_end_col(header, "OpenAI").expect("OpenAI not in header");
+        let d2 = char_end_col(data_row, "4,754").expect("4,754 not in data row");
+        assert_eq!(
+            h2, d2,
+            "second column right edges differ (header {h2} vs data {d2}).\n\
+             header:   {header}\n\
+             data row: {data_row}"
+        );
+    }
+
+    #[test]
+    fn tree_named_header_width_matches_total() {
+        // When data values are wider than column labels (e.g. approximate
+        // ranges like "5,752 – 6,248" are 13 chars vs label "Claude~" at 7),
+        // header columns must be padded to the same width as data columns.
+        // Otherwise the header row is narrower and subsequent columns are
+        // shifted left, misaligning with data.
+        let entries = [approx_entry()];
+        let s = run(
+            ".",
+            &entries,
+            &opts(false, false, false, CountFormat::Named),
+        );
+
+        let header = s.lines().next().unwrap();
+        let total = s.lines().find(|l| l.starts_with("Total")).unwrap();
+
+        assert_eq!(
+            header.chars().count(),
+            total.chars().count(),
+            "header and Total row have different display widths — columns \
+             are misaligned.\n  header: '{header}'\n  total:  '{total}'"
+        );
+    }
+
+    #[test]
+    fn flat_named_header_width_matches_total() {
+        // Same check as tree_named but for flat output.
+        let entries = [approx_entry()];
+        let s = run(".", &entries, &opts(true, false, false, CountFormat::Named));
+
+        let header = s.lines().next().unwrap();
+        let total = s.lines().find(|l| l.starts_with("Total")).unwrap();
+
+        assert_eq!(
+            header.chars().count(),
+            total.chars().count(),
+            "header and Total row have different display widths — columns \
+             are misaligned.\n  header: '{header}'\n  total:  '{total}'"
+        );
+    }
+
     #[test]
     fn tree_named_tabular_has_header_columns_and_totals() {
         let entries = [
             text_result("src/main.rs", &[("o200k", 1_234), ("claude", 1_180)]),
             text_result("src/lib.rs", &[("o200k", 456), ("claude", 420)]),
         ];
-        let s = run(".", &entries, &opts(false, false, false, CountFormat::Named));
+        let s = run(
+            ".",
+            &entries,
+            &opts(false, false, false, CountFormat::Named),
+        );
         assert!(s.contains("OpenAI"), "OpenAI header missing:\n{s}");
         assert!(s.contains("Claude"), "Claude header missing:\n{s}");
-        assert!(s.contains("TOTAL"), "TOTAL row missing:\n{s}");
+        assert!(s.contains("Total"), "Total row missing:\n{s}");
         assert!(s.contains("1,234"), "count 1,234 missing:\n{s}");
         assert!(s.contains("1,180"), "count 1,180 missing:\n{s}");
         // Totals: 1_234 + 456 = 1_690 and 1_180 + 420 = 1_600
@@ -360,7 +587,11 @@ mod tests {
             text_result("top.rs", &[("o200k", 1_000)]),
             text_result("sub/deep.rs", &[("o200k", 999)]),
         ];
-        let s = run(".", &entries, &opts(false, false, false, CountFormat::Named));
+        let s = run(
+            ".",
+            &entries,
+            &opts(false, false, false, CountFormat::Named),
+        );
         // Use char count (not byte length): box-drawing glyphs are 1 display
         // column but 3 bytes, so chars().count() gives the display width.
         let line_lengths: Vec<usize> = s
@@ -369,7 +600,10 @@ mod tests {
             .map(|l| l.chars().count())
             .collect();
         assert_eq!(line_lengths.len(), 2, "expected 2 file lines:\n{s}");
-        assert_eq!(line_lengths[0], line_lengths[1], "right edges not aligned:\n{s}");
+        assert_eq!(
+            line_lengths[0], line_lengths[1],
+            "right edges not aligned:\n{s}"
+        );
     }
 
     // ── from_approx ────────────────────────────────────────────────────────
@@ -377,15 +611,19 @@ mod tests {
     #[rstest]
     // Large: percentage band dominates
     #[case(1000, 957, 1043)]
-    #[case(200,  189, 211)]
-    #[case(100,   93, 107)]
+    #[case(200, 189, 211)]
+    #[case(100, 93, 107)]
     // Small: absolute ±2 floor keeps band ≥ 4 tokens wide
-    #[case(10,    7,  13)]
-    #[case(5,     2,   8)]
-    #[case(1,     0,   4)]
-    #[case(0,     0,   2)]
+    #[case(10, 7, 13)]
+    #[case(5, 2, 8)]
+    #[case(1, 0, 4)]
+    #[case(0, 0, 2)]
     fn from_approx_bounds(#[case] count: usize, #[case] lo: usize, #[case] hi: usize) {
-        let TokenCount::Approx { lo: got_lo, hi: got_hi } = TokenCount::from_approx(count) else {
+        let TokenCount::Approx {
+            lo: got_lo,
+            hi: got_hi,
+        } = TokenCount::from_approx(count)
+        else {
             panic!("expected Approx for count={count}");
         };
         assert_eq!(got_lo, lo, "lo mismatch for count={count}");
@@ -432,7 +670,10 @@ mod tests {
             .map(|l| l.chars().take_while(|&c| c != '[').count())
             .collect();
         assert_eq!(bracket_cols.len(), 2, "expected 2 file lines:\n{s}");
-        assert_eq!(bracket_cols[0], bracket_cols[1], "count brackets not aligned:\n{s}");
+        assert_eq!(
+            bracket_cols[0], bracket_cols[1],
+            "count brackets not aligned:\n{s}"
+        );
     }
 
     // ── JSON mode ──────────────────────────────────────────────────────────
@@ -448,7 +689,10 @@ mod tests {
         assert_eq!(v["root"], "src/");
         assert_eq!(v["files"].as_array().unwrap().len(), 2);
         assert_eq!(v["files"][0]["tokens"]["o200k"], 42);
-        assert!(v["files"][1]["tokens"].is_null(), "binary tokens should be null");
+        assert!(
+            v["files"][1]["tokens"].is_null(),
+            "binary tokens should be null"
+        );
         assert_eq!(v["total"]["o200k"], 42);
     }
 
