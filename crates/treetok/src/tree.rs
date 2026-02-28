@@ -251,3 +251,91 @@ impl Default for GlyphPalette {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+
+    use rstest::{fixture, rstest};
+
+    use super::*;
+
+    // ── Display impl (ported from termtree 0.4.1) ─────────────────────────
+    // Each case has a structurally distinct tree and a multi-line expected
+    // string, so named tests are clearer than #[case] rows here.
+
+    #[test]
+    fn display_root_only() {
+        let tree = Tree::new("foo");
+        assert_eq!(format!("{tree}"), "foo\n");
+    }
+
+    #[test]
+    fn display_nested_single_child() {
+        let tree = Tree::new("foo").with_leaves([Tree::new("bar").with_leaves(["baz"])]);
+        assert_eq!(
+            format!("{tree}"),
+            "foo\n\
+             └── bar\n\
+             \x20   └── baz\n"
+        );
+    }
+
+    #[test]
+    fn display_multiple_siblings() {
+        let tree = Tree::new("foo").with_leaves(["bar", "baz"]);
+        assert_eq!(
+            format!("{tree}"),
+            "foo\n\
+             ├── bar\n\
+             └── baz\n"
+        );
+    }
+
+    #[test]
+    fn display_multiline_labels() {
+        let tree = Tree::new("foo").with_leaves([
+            Tree::new("hello\nworld").with_multiline(true),
+            Tree::new("goodbye\nworld").with_multiline(true),
+        ]);
+        assert_eq!(
+            format!("{tree}"),
+            "foo\n\
+             ├── hello\n\
+             │   world\n\
+             └── goodbye\n\
+             \x20   world\n"
+        );
+    }
+
+    // ── render() — prefix_width delivered to closure ──────────────────────
+
+    /// Collects every `prefix_width` value passed to the render closure.
+    #[fixture]
+    fn widths() -> RefCell<Vec<usize>> {
+        RefCell::new(Vec::new())
+    }
+
+    #[rstest]
+    // Root alone → single call with width 0.
+    #[case(Tree::new("root"), vec![0])]
+    // Linear chain: root=0, child=4, grandchild=8.
+    #[case(
+        Tree::new("a").with_leaves([Tree::new("b").with_leaves(["c"])]),
+        vec![0, 4, 8]
+    )]
+    // Three siblings all share the same depth → all width 4.
+    #[case(Tree::new("root").with_leaves(["x", "y", "z"]), vec![0, 4, 4, 4])]
+    fn render_prefix_widths(
+        #[case] tree: Tree<&str>,
+        #[case] expected: Vec<usize>,
+        widths: RefCell<Vec<usize>>,
+    ) {
+        tree.render(&mut std::io::sink(), &|_, pw, _| {
+            widths.borrow_mut().push(pw);
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(*widths.borrow(), expected);
+    }
+}
