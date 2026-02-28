@@ -87,3 +87,82 @@ pub fn resolve_tokenizers(
 pub fn load_api_key() -> Option<String> {
     remote::load_api_key().ok()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rstest::rstest;
+
+    fn no_key() -> Option<String> { None }
+    fn some_key() -> Option<String> { Some("test-key".to_string()) }
+
+    #[rstest]
+    #[case::offline(true,  some_key())]
+    #[case::no_api_key(false, no_key())]
+    fn range_mode_without_claude_gives_o200k_and_ctoc(
+        #[case] offline: bool,
+        #[case] api_key: Option<String>,
+    ) {
+        let r = resolve_tokenizers(&[], offline, api_key).unwrap();
+        assert_eq!(r.local.len(), 2);
+        assert_eq!(r.local[0].name(), "o200k");
+        assert_eq!(r.local[1].name(), "ctoc");
+        assert!(r.claude.is_none());
+    }
+
+    #[test]
+    fn range_mode_with_key_uses_claude() {
+        let r = resolve_tokenizers(&[], false, some_key()).unwrap();
+        assert_eq!(r.local.len(), 1);
+        assert_eq!(r.local[0].name(), "o200k");
+        assert!(r.claude.is_some());
+    }
+
+    #[rstest]
+    #[case::o200k("o200k", false)]
+    #[case::ctoc("ctoc",   true)]
+    fn explicit_local_tokenizer(
+        #[case] name: &str,
+        #[case] is_approx: bool,
+        #[values(false, true)] offline: bool,
+    ) {
+        let r = resolve_tokenizers(&[name.to_string()], offline, no_key()).unwrap();
+        assert_eq!(r.local.len(), 1);
+        assert_eq!(r.local[0].name(), name);
+        assert_eq!(r.local[0].is_approximate(), is_approx);
+        assert!(r.claude.is_none());
+    }
+
+    #[test]
+    fn explicit_o200k_and_ctoc() {
+        let r =
+            resolve_tokenizers(&["o200k".to_string(), "ctoc".to_string()], false, no_key())
+                .unwrap();
+        assert_eq!(r.local.len(), 2);
+        assert_eq!(r.local[0].name(), "o200k");
+        assert_eq!(r.local[1].name(), "ctoc");
+        assert!(r.claude.is_none());
+    }
+
+    #[test]
+    fn unknown_alongside_valid_is_skipped() {
+        let r =
+            resolve_tokenizers(&["o200k".to_string(), "unknown".to_string()], false, no_key())
+                .unwrap();
+        assert_eq!(r.local.len(), 1);
+        assert_eq!(r.local[0].name(), "o200k");
+    }
+
+    #[rstest]
+    #[case::unknown_only(&["not_a_real_tokenizer"][..], false, no_key())]
+    #[case::offline_skips_claude(&["claude"][..],       true,  some_key())]
+    #[case::no_key_for_claude(&["claude"][..],          false, no_key())]
+    fn invalid_explicit_combinations_are_errors(
+        #[case] names: &[&str],
+        #[case] offline: bool,
+        #[case] api_key: Option<String>,
+    ) {
+        let names: Vec<String> = names.iter().map(|s| s.to_string()).collect();
+        assert!(resolve_tokenizers(&names, offline, api_key).is_err());
+    }
+}
