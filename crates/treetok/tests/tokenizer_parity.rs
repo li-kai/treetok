@@ -135,7 +135,7 @@ async fn hf_claude_tokenizer_candidates_vs_api() {
 
     // ── remote tokenizer ─────────────────────────────────────────────────────
 
-    let resolved = resolve_tokenizers(&["claude".to_string()], false)
+    let resolved = resolve_tokenizers(&["claude".to_string()], false, None)
         .expect("failed to resolve claude tokenizer – is an API key set?");
     let remote = resolved
         .claude
