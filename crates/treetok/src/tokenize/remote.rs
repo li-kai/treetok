@@ -37,7 +37,7 @@ fn select_api_key(
 }
 
 /// Load API key from environment, preferring `TREETOK_API_KEY` over `ANTHROPIC_API_KEY`.
-pub(crate) fn load_api_key() -> Result<String, TokenizeError> {
+pub fn load_api_key() -> Result<String, TokenizeError> {
     let preferred = std::env::var("TREETOK_API_KEY").ok();
     let fallback = std::env::var("ANTHROPIC_API_KEY").ok();
     select_api_key(preferred, fallback)

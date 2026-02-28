@@ -84,6 +84,7 @@ pub fn resolve_tokenizers(
 ///
 /// Prefers `TREETOK_API_KEY` over `ANTHROPIC_API_KEY`; returns `None` if
 /// neither is set.
+#[must_use]
 pub fn load_api_key() -> Option<String> {
     remote::load_api_key().ok()
 }
@@ -93,11 +94,16 @@ mod tests {
     use super::*;
     use rstest::rstest;
 
-    fn no_key() -> Option<String> { None }
-    fn some_key() -> Option<String> { Some("test-key".to_string()) }
+    fn no_key() -> Option<String> {
+        None
+    }
+    #[allow(clippy::unnecessary_wraps)]
+    fn some_key() -> Option<String> {
+        Some("test-key".to_string())
+    }
 
     #[rstest]
-    #[case::offline(true,  some_key())]
+    #[case::offline(true, some_key())]
     #[case::no_api_key(false, no_key())]
     fn range_mode_without_claude_gives_o200k_and_ctoc(
         #[case] offline: bool,
@@ -120,7 +126,7 @@ mod tests {
 
     #[rstest]
     #[case::o200k("o200k", false)]
-    #[case::ctoc("ctoc",   true)]
+    #[case::ctoc("ctoc", true)]
     fn explicit_local_tokenizer(
         #[case] name: &str,
         #[case] is_approx: bool,
@@ -135,9 +141,8 @@ mod tests {
 
     #[test]
     fn explicit_o200k_and_ctoc() {
-        let r =
-            resolve_tokenizers(&["o200k".to_string(), "ctoc".to_string()], false, no_key())
-                .unwrap();
+        let r = resolve_tokenizers(&["o200k".to_string(), "ctoc".to_string()], false, no_key())
+            .unwrap();
         assert_eq!(r.local.len(), 2);
         assert_eq!(r.local[0].name(), "o200k");
         assert_eq!(r.local[1].name(), "ctoc");
@@ -146,9 +151,12 @@ mod tests {
 
     #[test]
     fn unknown_alongside_valid_is_skipped() {
-        let r =
-            resolve_tokenizers(&["o200k".to_string(), "unknown".to_string()], false, no_key())
-                .unwrap();
+        let r = resolve_tokenizers(
+            &["o200k".to_string(), "unknown".to_string()],
+            false,
+            no_key(),
+        )
+        .unwrap();
         assert_eq!(r.local.len(), 1);
         assert_eq!(r.local[0].name(), "o200k");
     }
@@ -162,7 +170,7 @@ mod tests {
         #[case] offline: bool,
         #[case] api_key: Option<String>,
     ) {
-        let names: Vec<String> = names.iter().map(|s| s.to_string()).collect();
+        let names: Vec<String> = names.iter().map(std::string::ToString::to_string).collect();
         assert!(resolve_tokenizers(&names, offline, api_key).is_err());
     }
 }

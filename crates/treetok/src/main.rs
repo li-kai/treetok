@@ -60,7 +60,11 @@ fn main() {
     let cli = Cli::parse();
 
     // Resolve tokenizers.
-    let api_key = if cli.offline { None } else { tokenize::load_api_key() };
+    let api_key = if cli.offline {
+        None
+    } else {
+        tokenize::load_api_key()
+    };
     let resolved = match tokenize::resolve_tokenizers(&cli.tokenizers, cli.offline, api_key) {
         Ok(t) => t,
         Err(tokenize::TokenizeError::NoApiKey) => {
