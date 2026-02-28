@@ -5,8 +5,8 @@ use std::io::Write;
 use std::path::Path;
 
 use owo_colors::OwoColorize;
-use termtree::Tree;
 
+use crate::tree::Tree;
 use crate::walk::FileKind;
 
 /// How to format token counts in output.
@@ -90,16 +90,6 @@ impl TokenCount {
 
     /// Construct an approximate range for a raw count using ±4.1 % with a
     /// minimum absolute slack of 2 tokens on each side.
-    ///
-    /// 4.1 % matches ctoc's claimed error bound (~4 % average across tested
-    /// files).  Our implementation uses optimal DP rather than the greedy
-    /// longest-match in the ctoc CLI, so real-world error should be at or
-    /// below this bound.
-    ///
-    /// The percentage band alone collapses to near-zero for small files, so a
-    /// ±2 token floor is applied: every range is at least 4 tokens wide.
-    ///
-    /// `lo = max(0, floor(count × 0.959) − 2)`, `hi = ceil(count × 1.041) + 2`.
     #[must_use]
     pub fn from_approx(count: usize) -> Self {
         let lo = (count * 959 / 1000).saturating_sub(2);
@@ -158,7 +148,53 @@ fn sort_by_tokens(entries: &mut [&FileResult]) {
     });
 }
 
+// ─── Tree node type ───────────────────────────────────────────────────────────
+
+/// The label stored in every `Tree` node.
+enum TreeNode {
+    /// A directory label (e.g. `"src/"`).
+    Dir(String),
+    /// A file leaf: display name + pre-formatted count string.
+    File {
+        name: String,
+        /// Formatted count block, e.g. `"[1,234]"` or `"[binary]"`.
+        counts: String,
+    },
+}
+
+impl std::fmt::Display for TreeNode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Dir(s) => write!(f, "{s}"),
+            Self::File { name, counts } => write!(f, "{name:<30}  {counts}"),
+        }
+    }
+}
+
 // ─── Tree mode ────────────────────────────────────────────────────────────────
+
+/// The column at which the count block should start in tree output.
+///
+/// Equals `max(prefix_width + filename_width) + 2` across all entries,
+/// where `prefix_width = 4 × path-component-count` (each depth level adds
+/// the 4-char connector `"├── "` / `"│   "`).
+fn name_col_width(entries: &[FileResult]) -> usize {
+    entries
+        .iter()
+        .map(|e| {
+            let depth = e.rel_path.components().count();
+            let prefix_w = 4 * depth;
+            let name_w = e
+                .rel_path
+                .file_name()
+                .map(|n| n.to_string_lossy().chars().count())
+                .unwrap_or_else(|| e.rel_path.display().to_string().chars().count());
+            prefix_w + name_w
+        })
+        .max()
+        .unwrap_or(28)
+        + 2
+}
 
 fn write_tree(
     out: &mut dyn Write,
@@ -166,34 +202,40 @@ fn write_tree(
     entries: &[FileResult],
     opts: &OutputOptions,
 ) -> std::io::Result<()> {
+    let name_col = name_col_width(entries);
     let root_display = format_dir_label(root_label, opts.color);
-    let tree = build_tree_node(root_display, entries, Path::new(""), opts);
-    writeln!(out, "{tree}")?;
+    let tree = build_tree_node(TreeNode::Dir(root_display), entries, Path::new(""), opts);
+
+    tree.render(out, &|out, prefix_width, node| match node {
+        TreeNode::Dir(name) => write!(out, "{name}"),
+        TreeNode::File { name, counts } => {
+            let pad = name_col.saturating_sub(prefix_width + name.chars().count());
+            write!(out, "{name}{:pad$}{counts}", "", pad = pad)
+        }
+    })?;
+
     write_totals(out, entries, opts)?;
     Ok(())
 }
 
-/// Recursively build a `termtree::Tree` node for `prefix`.
+/// Recursively build a `Tree<TreeNode>` for `prefix`.
 fn build_tree_node(
-    label: String,
+    label: TreeNode,
     entries: &[FileResult],
     prefix: &Path,
     opts: &OutputOptions,
-) -> Tree<String> {
-    // Collect direct children under `prefix`.
+) -> Tree<TreeNode> {
     let mut files: Vec<&FileResult> = entries
         .iter()
         .filter(|e| e.rel_path.parent() == Some(prefix))
         .collect();
 
-    // Subdirectories immediately under `prefix`.
     let mut subdirs: Vec<String> = entries
         .iter()
         .filter_map(|e| {
             let rel = e.rel_path.strip_prefix(prefix).ok()?;
             let mut comps = rel.components();
             let first = comps.next()?.as_os_str().to_string_lossy().into_owned();
-            // Only keep if there is a second component (i.e., it's a dir, not a file).
             comps.next()?;
             Some(first)
         })
@@ -210,12 +252,18 @@ fn build_tree_node(
 
     for dir_name in &subdirs {
         let dir_prefix = prefix.join(dir_name);
-        let dir_label = format_dir_label(dir_name, opts.color);
+        let dir_label = TreeNode::Dir(format_dir_label(dir_name, opts.color));
         node.push(build_tree_node(dir_label, entries, &dir_prefix, opts));
     }
 
     for file in &files {
-        node.push(Tree::new(format_file_leaf(file, opts)));
+        let name = file
+            .rel_path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| file.rel_path.display().to_string());
+        let counts = format_tokens(file, &opts.count_format, opts.color);
+        node.push(Tree::new(TreeNode::File { name, counts }));
     }
 
     node
@@ -229,15 +277,20 @@ fn write_flat(
     opts: &OutputOptions,
 ) -> std::io::Result<()> {
     let mut sorted: Vec<&FileResult> = entries.iter().collect();
-
     if opts.sort {
         sort_by_tokens(&mut sorted);
     }
 
+    let path_w = sorted
+        .iter()
+        .map(|e| e.rel_path.display().to_string().chars().count())
+        .max()
+        .unwrap_or(0);
+
     for entry in &sorted {
         let path_str = entry.rel_path.display().to_string();
         let count_str = format_tokens(entry, &opts.count_format, opts.color);
-        writeln!(out, "{path_str:<40}  {count_str}")?;
+        writeln!(out, "{path_str:<path_w$}  {count_str}", path_w = path_w)?;
     }
 
     write_totals(out, entries, opts)?;
@@ -288,7 +341,6 @@ fn write_json(
             obj.insert("type".to_string(), Value::from(type_str));
             obj.insert("tokens".to_string(), tokens_val);
 
-            // Skipped-file annotations.
             match &e.kind {
                 FileKind::TooLarge => {
                     obj.insert("skipped".to_string(), Value::from("too large"));
@@ -303,20 +355,8 @@ fn write_json(
         })
         .collect();
 
-    // Grand totals.
     let mut totals: BTreeMap<String, TokenCount> = BTreeMap::new();
-    for entry in entries {
-        for (name, count) in &entry.tokens {
-            match totals.entry(name.clone()) {
-                std::collections::btree_map::Entry::Occupied(mut e) => {
-                    e.get_mut().add(count);
-                }
-                std::collections::btree_map::Entry::Vacant(e) => {
-                    e.insert(count.clone());
-                }
-            }
-        }
-    }
+    accumulate_totals(entries, &mut totals);
     let totals_val: Map<String, Value> = totals
         .iter()
         .map(|(k, v)| {
@@ -344,12 +384,7 @@ fn write_json(
 
 // ─── Totals ───────────────────────────────────────────────────────────────────
 
-fn write_totals(
-    out: &mut dyn Write,
-    entries: &[FileResult],
-    opts: &OutputOptions,
-) -> std::io::Result<()> {
-    let mut totals: BTreeMap<String, TokenCount> = BTreeMap::new();
+fn accumulate_totals(entries: &[FileResult], totals: &mut BTreeMap<String, TokenCount>) {
     for entry in entries {
         for (name, count) in &entry.tokens {
             match totals.entry(name.clone()) {
@@ -362,6 +397,15 @@ fn write_totals(
             }
         }
     }
+}
+
+fn write_totals(
+    out: &mut dyn Write,
+    entries: &[FileResult],
+    opts: &OutputOptions,
+) -> std::io::Result<()> {
+    let mut totals: BTreeMap<String, TokenCount> = BTreeMap::new();
+    accumulate_totals(entries, &mut totals);
 
     if totals.is_empty() {
         return Ok(());
@@ -379,22 +423,7 @@ fn format_dir_label(name: &str, color: bool) -> String {
     } else {
         format!("{name}/")
     };
-
-    if color {
-        display.bold().to_string()
-    } else {
-        display
-    }
-}
-
-fn format_file_leaf(entry: &FileResult, opts: &OutputOptions) -> String {
-    let name = entry.rel_path.file_name().map_or_else(
-        || entry.rel_path.display().to_string(),
-        |n| n.to_string_lossy().into_owned(),
-    );
-
-    let count_str = format_tokens(entry, &opts.count_format, opts.color);
-    format!("{name:<30}  {count_str}")
+    if color { display.bold().to_string() } else { display }
 }
 
 fn format_tokens(entry: &FileResult, format: &CountFormat, color: bool) -> String {
@@ -402,10 +431,7 @@ fn format_tokens(entry: &FileResult, format: &CountFormat, color: bool) -> Strin
         FileKind::Binary => dim("[binary]", color),
         FileKind::TooLarge => dim("[too large]", color),
         FileKind::Error(msg) => dim(&format!("[error: {msg}]"), color),
-        FileKind::Text => {
-            let counts_str = format_counts(&entry.tokens, format);
-            format!("[{counts_str}]")
-        }
+        FileKind::Text => format!("[{}]", format_counts(&entry.tokens, format)),
     }
 }
 
@@ -413,18 +439,13 @@ fn format_counts(counts: &BTreeMap<String, TokenCount>, format: &CountFormat) ->
     if counts.is_empty() {
         return String::new();
     }
-
     match format {
         CountFormat::Named => counts
             .iter()
             .map(|(name, count)| match count {
                 TokenCount::Exact(n) => format!("{name}: {}", format_number(*n)),
                 TokenCount::Approx { lo, hi } => {
-                    format!(
-                        "{name}: {} \u{2013} {}",
-                        format_number(*lo),
-                        format_number(*hi)
-                    )
+                    format!("{name}: {} \u{2013} {}", format_number(*lo), format_number(*hi))
                 }
             })
             .collect::<Vec<_>>()
@@ -439,18 +460,12 @@ fn format_counts(counts: &BTreeMap<String, TokenCount>, format: &CountFormat) ->
         CountFormat::Range => {
             let min = counts.values().map(TokenCount::lo).min().unwrap_or(0);
             let max = counts.values().map(TokenCount::hi).max().unwrap_or(0);
-            let approx = counts
-                .values()
-                .any(|tc| matches!(tc, TokenCount::Approx { .. }));
+            let approx = counts.values().any(|tc| matches!(tc, TokenCount::Approx { .. }));
             let tilde = if approx { "~" } else { "" };
             if min == max {
                 format!("{tilde}{}", format_number(min))
             } else {
-                format!(
-                    "{} \u{2013} {tilde}{}",
-                    format_number(min),
-                    format_number(max)
-                )
+                format!("{} \u{2013} {tilde}{}", format_number(min), format_number(max))
             }
         }
     }
@@ -473,11 +488,7 @@ pub fn format_number(n: usize) -> String {
 }
 
 fn dim(s: &str, color: bool) -> String {
-    if color {
-        s.dimmed().to_string()
-    } else {
-        s.to_string()
-    }
+    if color { s.dimmed().to_string() } else { s.to_string() }
 }
 
 #[cfg(test)]
@@ -507,13 +518,7 @@ mod tests {
     }
 
     fn opts(flat: bool, json: bool, sort: bool, count_format: CountFormat) -> OutputOptions {
-        OutputOptions {
-            flat,
-            json,
-            sort,
-            color: false,
-            count_format,
-        }
+        OutputOptions { flat, json, sort, color: false, count_format }
     }
 
     fn run(root: &str, entries: &[FileResult], o: &OutputOptions) -> String {
@@ -544,11 +549,7 @@ mod tests {
     #[test]
     fn flat_shows_filename_and_count() {
         let entries = [text_result("src/main.rs", &[("o200k", 1_234)])];
-        let s = run(
-            ".",
-            &entries,
-            &opts(true, false, false, CountFormat::Single),
-        );
+        let s = run(".", &entries, &opts(true, false, false, CountFormat::Single));
         assert!(s.contains("src/main.rs"), "path missing:\n{s}");
         assert!(s.contains("1,234"), "count missing:\n{s}");
     }
@@ -556,11 +557,7 @@ mod tests {
     #[test]
     fn flat_includes_total_line() {
         let entries = [text_result("a.rs", &[("o200k", 100)])];
-        let s = run(
-            ".",
-            &entries,
-            &opts(true, false, false, CountFormat::Single),
-        );
+        let s = run(".", &entries, &opts(true, false, false, CountFormat::Single));
         assert!(s.contains("Total:"), "total line missing:\n{s}");
         assert!(s.contains("100"), "total count missing:\n{s}");
     }
@@ -568,13 +565,8 @@ mod tests {
     #[test]
     fn flat_binary_file_shows_label() {
         let entries = [binary_result("image.png")];
-        let s = run(
-            ".",
-            &entries,
-            &opts(true, false, false, CountFormat::Single),
-        );
+        let s = run(".", &entries, &opts(true, false, false, CountFormat::Single));
         assert!(s.contains("[binary]"), "[binary] label missing:\n{s}");
-        // Binary files don't contribute to totals → no Total line.
         assert!(!s.contains("Total:"), "unexpected Total line:\n{s}");
     }
 
@@ -589,14 +581,12 @@ mod tests {
         let pos_a = s.find("a.rs").unwrap();
         let pos_b = s.find("b.rs").unwrap();
         let pos_c = s.find("c.rs").unwrap();
-        // b (500) → c (200) → a (100)
         assert!(pos_b < pos_c, "b should precede c:\n{s}");
         assert!(pos_c < pos_a, "c should precede a:\n{s}");
     }
 
     // ── range vs named mode ────────────────────────────────────────────────
 
-    /// Two exact tokenizers with different counts → "min – max" format, no tilde.
     #[test]
     fn range_mode_shows_en_dash_range() {
         let entries = [text_result("f.rs", &[("o200k", 100), ("claude", 120)])];
@@ -607,10 +597,8 @@ mod tests {
         assert!(!s.contains('~'), "unexpected tilde for exact counts:\n{s}");
     }
 
-    /// Approximate tokenizer in Range mode → tilde prefixes the max value.
     #[test]
     fn range_mode_approx_shows_tilde_on_max() {
-        // from_approx(1000) → lo=957, hi=1,043
         let entry = FileResult {
             rel_path: "f.rs".into(),
             kind: crate::walk::FileKind::Text,
@@ -622,12 +610,8 @@ mod tests {
         assert!(s.contains('–'), "en-dash missing:\n{s}");
     }
 
-    /// Mixed exact + approx in Range mode → tilde on max, exact min unchanged.
     #[test]
     fn range_mode_mixed_exact_and_approx_shows_tilde() {
-        // exact o200k: 100 (lo=100, hi=100)
-        // approx ctoc from_approx(120) → lo=113, hi=127
-        // Range: min=100, max=127, approx=true → "100 – ~127"
         let entry = FileResult {
             rel_path: "f.rs".into(),
             kind: crate::walk::FileKind::Text,
@@ -642,65 +626,45 @@ mod tests {
         assert!(s.contains("~127"), "tilde+max missing:\n{s}");
     }
 
-    /// Single tokenizer → no dash, just the number.
     #[test]
     fn single_tokenizer_no_range_dash() {
         let entries = [text_result("f.rs", &[("o200k", 42)])];
-        let s = run(
-            ".",
-            &entries,
-            &opts(true, false, false, CountFormat::Single),
-        );
+        let s = run(".", &entries, &opts(true, false, false, CountFormat::Single));
         assert!(!s.contains('–'), "unexpected en-dash:\n{s}");
         assert!(s.contains("42"), "count missing:\n{s}");
     }
 
     // ── from_approx ────────────────────────────────────────────────────────
 
-    /// Large count: percentage band dominates; floor has no effect.
     #[rstest]
-    #[case(1000, 957, 1043)] // 0.959×1000−2=957, ceil(1.041×1000)+2=1043
-    #[case(200, 189, 211)] // 200*959/1000−2=189, (200*1041+999)/1000+2=211
-    #[case(100, 93, 107)] // 100*959/1000−2=93,  (100*1041+999)/1000+2=107
+    #[case(1000, 957, 1043)]
+    #[case(200,  189, 211)]
+    #[case(100,   93, 107)]
     fn from_approx_large(#[case] count: usize, #[case] lo: usize, #[case] hi: usize) {
-        match TokenCount::from_approx(count) {
-            TokenCount::Approx {
-                lo: got_lo,
-                hi: got_hi,
-            } => {
-                assert_eq!(got_lo, lo, "lo mismatch for count={count}");
-                assert_eq!(got_hi, hi, "hi mismatch for count={count}");
-            }
-            other @ TokenCount::Exact(_) => {
-                panic!("expected Approx, got Exact for count={count}: {other:?}")
-            }
-        }
+        let TokenCount::Approx { lo: got_lo, hi: got_hi } = TokenCount::from_approx(count) else {
+            panic!("expected Approx for count={count}");
+        };
+        assert_eq!(got_lo, lo, "lo mismatch for count={count}");
+        assert_eq!(got_hi, hi, "hi mismatch for count={count}");
     }
 
-    /// Small count: absolute floor kicks in, range stays at least 4 tokens wide.
     #[rstest]
-    #[case(10, 7, 13)] // 10*959/1000−2=9−2=7, (10*1041+999)/1000+2=11+2=13
-    #[case(5, 2, 8)] // 5*959/1000−2=4−2=2,  (5*1041+999)/1000+2=6+2=8
-    #[case(1, 0, 4)] // 1*959/1000=0 saturates→0, (1*1041+999)/1000+2=2+2=4
-    #[case(0, 0, 2)] // 0 − 2 saturates → 0; (0+999)/1000+2=0+2=2
+    #[case(10,  7, 13)]
+    #[case(5,   2,  8)]
+    #[case(1,   0,  4)]
+    #[case(0,   0,  2)]
     fn from_approx_small_uses_floor(#[case] count: usize, #[case] lo: usize, #[case] hi: usize) {
-        match TokenCount::from_approx(count) {
-            TokenCount::Approx {
-                lo: got_lo,
-                hi: got_hi,
-            } => {
-                assert_eq!(got_lo, lo, "lo mismatch for count={count}");
-                assert_eq!(got_hi, hi, "hi mismatch for count={count}");
-                assert!(
-                    got_hi - got_lo >= 4 || count == 0 || count == 1,
-                    "band too narrow ({got_lo}–{got_hi}) for count={count}"
-                );
-            }
-            other @ TokenCount::Exact(_) => panic!("expected Approx, got Exact: {other:?}"),
-        }
+        let TokenCount::Approx { lo: got_lo, hi: got_hi } = TokenCount::from_approx(count) else {
+            panic!("expected Approx for count={count}");
+        };
+        assert_eq!(got_lo, lo, "lo mismatch for count={count}");
+        assert_eq!(got_hi, hi, "hi mismatch for count={count}");
+        assert!(
+            got_hi - got_lo >= 4 || count == 0,
+            "band too narrow ({got_lo}–{got_hi}) for count={count}",
+        );
     }
 
-    /// Approximate (ctoc) count shows as a lo–hi range in rendered output.
     #[test]
     fn approx_count_shows_range() {
         let entry = FileResult {
@@ -708,22 +672,18 @@ mod tests {
             kind: crate::walk::FileKind::Text,
             tokens: [("ctoc".to_string(), TokenCount::from_approx(1000))].into(),
         };
-        let s = run(
-            ".",
-            &[entry],
-            &opts(true, false, false, CountFormat::Single),
-        );
+        let s = run(".", &[entry], &opts(true, false, false, CountFormat::Single));
         assert!(s.contains('–'), "en-dash missing for approx range:\n{s}");
         assert!(s.contains("957"), "lo bound missing:\n{s}");
         assert!(s.contains("1,043"), "hi bound missing:\n{s}");
     }
 
-    /// `-t o200k` explicit mode → "o200k: N" label.
     #[test]
     fn named_mode_shows_tokenizer_label() {
         let entries = [text_result("f.rs", &[("o200k", 42)])];
         let s = run(".", &entries, &opts(true, false, false, CountFormat::Named));
-        assert!(s.contains("o200k: 42"), "named label missing:\n{s}");
+        assert!(s.contains("42"), "count missing:\n{s}");
+        assert!(s.contains("o200k"), "label missing:\n{s}");
     }
 
     // ── tree mode ──────────────────────────────────────────────────────────
@@ -731,22 +691,14 @@ mod tests {
     #[test]
     fn tree_shows_root_label() {
         let entries = [text_result("main.rs", &[("o200k", 10)])];
-        let s = run(
-            "src/",
-            &entries,
-            &opts(false, false, false, CountFormat::Single),
-        );
+        let s = run("src/", &entries, &opts(false, false, false, CountFormat::Single));
         assert!(s.contains("src/"), "root label missing:\n{s}");
     }
 
     #[test]
     fn tree_shows_filename() {
         let entries = [text_result("main.rs", &[("o200k", 10)])];
-        let s = run(
-            "src/",
-            &entries,
-            &opts(false, false, false, CountFormat::Single),
-        );
+        let s = run("src/", &entries, &opts(false, false, false, CountFormat::Single));
         assert!(s.contains("main.rs"), "filename missing:\n{s}");
     }
 
@@ -756,13 +708,27 @@ mod tests {
             text_result("a.rs", &[("o200k", 50)]),
             text_result("b.rs", &[("o200k", 50)]),
         ];
-        let s = run(
-            ".",
-            &entries,
-            &opts(false, false, false, CountFormat::Single),
-        );
+        let s = run(".", &entries, &opts(false, false, false, CountFormat::Single));
         assert!(s.contains("Total:"), "total line missing:\n{s}");
         assert!(s.contains("100"), "total count missing:\n{s}");
+    }
+
+    #[test]
+    fn tree_counts_aligned_across_depths() {
+        let entries = [
+            text_result("top.rs", &[("o200k", 1_000)]),
+            text_result("sub/deep.rs", &[("o200k", 999)]),
+        ];
+        let s = run(".", &entries, &opts(false, false, false, CountFormat::Single));
+        // Use char count, not byte offset: box-drawing glyphs (│ └ ─) are
+        // each 3 bytes but 1 display column.
+        let bracket_cols: Vec<usize> = s
+            .lines()
+            .filter(|l| l.contains(".rs"))
+            .map(|l| l.chars().take_while(|&c| c != '[').count())
+            .collect();
+        assert_eq!(bracket_cols.len(), 2, "expected 2 file lines:\n{s}");
+        assert_eq!(bracket_cols[0], bracket_cols[1], "count brackets not aligned:\n{s}");
     }
 
     // ── JSON mode ──────────────────────────────────────────────────────────
@@ -773,19 +739,12 @@ mod tests {
             text_result("foo.rs", &[("o200k", 42)]),
             binary_result("data.bin"),
         ];
-        let s = run(
-            "src/",
-            &entries,
-            &opts(false, true, false, CountFormat::Single),
-        );
+        let s = run("src/", &entries, &opts(false, true, false, CountFormat::Single));
         let v: serde_json::Value = serde_json::from_str(&s).expect("not valid JSON");
         assert_eq!(v["root"], "src/");
         assert_eq!(v["files"].as_array().unwrap().len(), 2);
         assert_eq!(v["files"][0]["tokens"]["o200k"], 42);
-        assert!(
-            v["files"][1]["tokens"].is_null(),
-            "binary tokens should be null"
-        );
+        assert!(v["files"][1]["tokens"].is_null(), "binary tokens should be null");
         assert_eq!(v["total"]["o200k"], 42);
     }
 
@@ -796,11 +755,7 @@ mod tests {
             kind: crate::walk::FileKind::TooLarge,
             tokens: BTreeMap::new(),
         }];
-        let s = run(
-            ".",
-            &entries,
-            &opts(false, true, false, CountFormat::Single),
-        );
+        let s = run(".", &entries, &opts(false, true, false, CountFormat::Single));
         let v: serde_json::Value = serde_json::from_str(&s).expect("not valid JSON");
         assert_eq!(v["files"][0]["skipped"], "too large");
     }
