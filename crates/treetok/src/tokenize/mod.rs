@@ -72,14 +72,14 @@ mod tokenizer_id {
     /// Stable identifier for each supported tokenizer.
     ///
     /// Variant declaration order (Claude < Ctoc < O200k) mirrors the current
-    /// alphabetical string order so BTreeMap column sequences are unchanged.
+    /// alphabetical string order so `BTreeMap` column sequences are unchanged.
     #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
     pub enum TokenizerId {
         /// The Claude API tokenizer (`"claude"`).
         Claude,
         /// The ctoc approximate tokenizer (`"ctoc"`).
         Ctoc,
-        /// The OpenAI o200k_base tokenizer (`"o200k"`).
+        /// The `OpenAI` `o200k_base` tokenizer (`"o200k"`).
         O200k,
     }
 
@@ -102,7 +102,7 @@ mod tokenizer_id {
                 Self::Ctoc => "Claude~",
                 Self::O200k => "OpenAI",
             };
-            write!(f, "{s}")
+            f.pad(s)
         }
     }
 
