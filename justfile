@@ -104,9 +104,14 @@ check-all:
 update-ctoc:
     cargo run -p xtask -- update-ctoc
 
-# Tag and push a release (triggers cargo-dist CI)
+# Bump version, commit, tag, and push a release (triggers cargo-dist CI)
 release version:
+    sed -i "s/^version = \".*\"/version = \"{{ version }}\"/" Cargo.toml
+    cargo update --workspace
+    git add Cargo.toml Cargo.lock
+    git commit -m "Release v{{ version }}"
     git tag "v{{ version }}"
+    git push origin main
     git push origin "v{{ version }}"
 
 # Build binary reproducibly via Nix flake
