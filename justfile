@@ -107,8 +107,9 @@ update-ctoc:
 # Bump version, commit, tag, and push a release (triggers cargo-dist CI)
 release version:
     sed -i "s/^version = \".*\"/version = \"{{ version }}\"/" Cargo.toml
+    sed -i "s/version = \".*\";/version = \"{{ version }}\";/" flake.nix
     cargo update --workspace
-    git add Cargo.toml Cargo.lock
+    git add Cargo.toml Cargo.lock flake.nix
     git commit -m "Release v{{ version }}"
     git tag "v{{ version }}"
     git push origin main

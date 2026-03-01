@@ -46,7 +46,7 @@
       {
         packages.default = rustPlatform.buildRustPackage {
           pname = "treetok";
-          version = "0.1.2";
+          version = "0.1.4";
           src = ./.;
           cargoLock.lockFile = ./Cargo.lock;
           cargoBuildFlags = [ "--package" "treetok" ];
