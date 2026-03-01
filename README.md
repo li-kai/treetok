@@ -38,9 +38,22 @@ Download the latest binary for your platform from the [GitHub Releases][releases
 
 **Nix**
 
+Install globally:
+
 ```bash
-nix build
-./result/bin/treetok --help
+nix profile install github:li-kai/treetok
+```
+
+Or add to your `flake.nix`:
+
+```nix
+inputs.treetok.url = "github:li-kai/treetok";
+```
+
+Then reference it in your `devShells` or `packages`:
+
+```nix
+packages = [ inputs.treetok.packages.${system}.default ];
 ```
 
 **Cargo**
