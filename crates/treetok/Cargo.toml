@@ -27,7 +27,7 @@ reqwest.workspace = true
 futures.workspace = true
 aho-corasick = "1"
 ignore = "0.4"
-tiktoken-rs = "0.6"
+tiktoken-rs = "0.9"
 owo-colors = "4"
 exitcode = "1"
 serde = { version = "1", features = ["derive"] }

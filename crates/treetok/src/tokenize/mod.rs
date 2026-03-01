@@ -79,7 +79,7 @@ mod tokenizer_id {
         Claude,
         /// The ctoc approximate tokenizer (`"ctoc"`).
         Ctoc,
-        /// The `OpenAI` `o200k_base` tokenizer (`"o200k"`).
+        /// The `OpenAI` `o200k_harmony` tokenizer (`"o200k"`).
         O200k,
     }
 

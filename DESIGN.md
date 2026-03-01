@@ -128,7 +128,7 @@ treetok --json | jq
 | Name | Method | Offline? |
 |---|---|---|
 | `claude` | Anthropic `count_tokens` API | No |
-| `o200k` | `tiktoken-rs` (`o200k_base`) | Yes |
+| `o200k` | `tiktoken-rs` (`o200k_harmony`) | Yes |
 
 ### Deferred (V2+)
 

@@ -15,9 +15,9 @@ pub trait Tokenizer {
     }
 }
 
-// ─── o200k (tiktoken) ────────────────────────────────────────────────────────
+// ─── o200k_harmony (tiktoken) ────────────────────────────────────────────────────
 
-/// Offline tokenizer backed by `OpenAI`'s `o200k_base` BPE vocabulary.
+/// Offline tokenizer backed by `OpenAI`'s `o200k_harmony` BPE vocabulary.
 pub struct O200kTokenizer {
     bpe: tiktoken_rs::CoreBPE,
 }
@@ -25,7 +25,7 @@ pub struct O200kTokenizer {
 impl O200kTokenizer {
     /// Initialise the encoder (loads vocabulary data).
     pub fn new() -> Result<Self, TokenizeError> {
-        let bpe = tiktoken_rs::o200k_base().map_err(|e| TokenizeError::Init(e.to_string()))?;
+        let bpe = tiktoken_rs::o200k_harmony().map_err(|e| TokenizeError::Init(e.to_string()))?;
         Ok(Self { bpe })
     }
 }
