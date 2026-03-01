@@ -1,6 +1,6 @@
 # treetok
 
-Like `tree`, but shows token counts instead of file sizes. Use it to budget context and identify files to refactor.
+Like `tree`, but shows token counts instead of file sizes. Budget context and identify files to refactor.
 
 ```console
 $ treetok src/
@@ -34,14 +34,22 @@ brew install li-kai/treetok/treetok
 
 **Pre-built binaries**
 
-Download the latest binary for your platform from the [GitHub Releases][releases] page.
+Download from [GitHub Releases][releases].
+
+[releases]: https://github.com/li-kai/treetok/releases
+
+**Cargo**
+
+```bash
+cargo install --git https://github.com/li-kai/treetok treetok
+```
 
 **Nix**
 
 Install globally:
 
 ```bash
-nix profile install github:li-kai/treetok
+nix profile install github:li-kai/treetok --accept-flake-config
 ```
 
 Or add to your `flake.nix`:
@@ -56,13 +64,14 @@ Then reference it in your `devShells` or `packages`:
 packages = [ inputs.treetok.packages.${system}.default ];
 ```
 
-**Cargo**
+To use pre-built binaries from the cache, add to your `flake.nix`:
 
-```bash
-cargo install --git https://github.com/li-kai/treetok treetok
+```nix
+nixConfig = {
+  extra-substituters = [ "https://li-kai.cachix.org" ];
+  extra-trusted-public-keys = [ "li-kai.cachix.org-1:hT/YtROuqsBhfSx1YDcMrFxBbnZLoyu+WA1CnhiUgWM=" ];
+};
 ```
-
-[releases]: https://github.com/li-kai/treetok/releases
 
 ## Usage
 
@@ -98,7 +107,7 @@ treetok --depth 2 src/
 | `--depth <N>` | Limit tree depth |
 | `--offline` | Skip the Claude tokenizer |
 | `--no-color` | Disable colored output |
-| `-t <NAME>` | Use a specific tokenizer |
+| `-t <NAME>` | Select a specific tokenizer |
 
 ### Tokenizers
 
@@ -116,7 +125,9 @@ treetok -t o200k src/
 
 ## Anthropic API key
 
-The Claude tokenizer requires an API key from [console.anthropic.com/account/keys][api-keys]. Set it as an environment variable:
+The Claude tokenizer requires an API key from [console.anthropic.com][api-keys]. Set it as an environment variable:
+
+[api-keys]: https://console.anthropic.com/account/keys
 
 ```bash
 export ANTHROPIC_API_KEY="sk-ant-..."
@@ -124,7 +135,4 @@ export ANTHROPIC_API_KEY="sk-ant-..."
 export TREETOK_API_KEY="sk-ant-..."
 ```
 
-Add it to `.env` and make sure `.env` is in `.gitignore`.
-
-[nix]: https://nixos.org/download/
-[api-keys]: https://console.anthropic.com/account/keys
+Add it to `.env` and ensure `.env` is in `.gitignore`.
