@@ -17,10 +17,11 @@ Accuracy > Performance > UX > Maintainability > Binary size
 treetok [OPTIONS] [PATH...]
 ```
 
-Multiple paths supported. Defaults to `.` if none given.
+Multiple paths supported. Defaults to `.` if none given (see stdin section below).
 
 - No flags: show token count range (min–max across all available tokenizers)
 - `-t <name>`: show exact count for a specific tokenizer (repeatable for side-by-side)
+- `--count`: output only the total token count as a bare number (see below)
 - `--sort`: sort by max token count descending
 - `--json`: JSON output (see JSON schema below)
 - `--flat`: flat list with full paths, no tree connectors
@@ -30,9 +31,38 @@ Multiple paths supported. Defaults to `.` if none given.
 
 `--flat` + `--sort` combine naturally. `--flat` + `--depth` is a no-op (`--depth` ignored).
 
-### Deferred (V1.1)
+### Stdin
 
-- `-` (stdin): read single file from stdin, output token count only
+Auto-detected via TTY check, no flag needed. Also accepts explicit `-` path.
+
+Input resolution:
+
+1. Paths given → walk those paths
+2. No paths + stdin is a pipe → read stdin
+3. No paths + stdin is a terminal → default to `.`
+
+Stdin is read as a single text blob and tokenized. Tree/flat/sort/depth are ignored silently. `--json` and `--count` still apply.
+
+`-` as an explicit path: treated as stdin even when mixed with real paths. At most one `-` allowed (error otherwise). Appears as `<stdin>` in output.
+
+### `--count`
+
+Output only the total token count — no tree, no filenames, no formatting. Designed for scripts and composition.
+
+```
+$ echo "hello world" | treetok --count
+3
+$ treetok --count src/main.rs
+1189
+$ treetok --count src/
+4523
+```
+
+Rules:
+- With multiple active tokenizers, outputs the maximum count across them.
+- Output is a single integer on stdout, newline-terminated. No label, no formatting, no color.
+- Incompatible with `--json`, `--flat`, `--sort` — error on combination.
+- `--depth` still applies (limits which files are counted).
 
 ## Output
 
