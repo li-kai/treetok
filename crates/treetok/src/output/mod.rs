@@ -494,7 +494,8 @@ fn write_json(
 /// Label used for the totals row in tabular output.
 const TOTAL_LABEL: &str = "Total";
 
-fn accumulate_totals(entries: &[FileResult], totals: &mut BTreeMap<TokenizerId, TokenCount>) {
+/// Sum token counts from `entries` into `totals`, merging by tokenizer id.
+pub fn accumulate_totals(entries: &[FileResult], totals: &mut BTreeMap<TokenizerId, TokenCount>) {
     for entry in entries {
         for (name, count) in &entry.tokens {
             match totals.entry(*name) {
@@ -507,6 +508,13 @@ fn accumulate_totals(entries: &[FileResult], totals: &mut BTreeMap<TokenizerId, 
             }
         }
     }
+}
+
+/// Return the maximum token count across all tokenizer entries in `totals`,
+/// using `hi` for approximate ranges.  Returns 0 if `totals` is empty.
+#[must_use]
+pub fn max_total(totals: &BTreeMap<TokenizerId, TokenCount>) -> usize {
+    totals.values().map(TokenCount::hi).max().unwrap_or(0)
 }
 
 fn write_totals(
@@ -523,4 +531,76 @@ fn write_totals(
 
     let total_str = format_counts(&totals, &opts.count_format);
     writeln!(out, "\n{TOTAL_LABEL}: [{total_str}]")
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use rstest::rstest;
+
+    use super::{accumulate_totals, max_total, FileResult, TokenCount};
+    use crate::tokenize::TokenizerId;
+    use crate::walk::FileKind;
+
+    fn text_result(counts: &[(TokenizerId, TokenCount)]) -> FileResult {
+        FileResult {
+            rel_path: "f.rs".into(),
+            kind: FileKind::Text,
+            tokens: counts.iter().cloned().collect(),
+        }
+    }
+
+    #[test]
+    fn accumulate_totals_sums_exact_counts() {
+        let entries = vec![
+            text_result(&[(TokenizerId::O200k, TokenCount::Exact(10))]),
+            text_result(&[(TokenizerId::O200k, TokenCount::Exact(20))]),
+        ];
+        let mut totals = BTreeMap::new();
+        accumulate_totals(&entries, &mut totals);
+        assert_eq!(totals[&TokenizerId::O200k].hi(), 30);
+    }
+
+    #[test]
+    fn accumulate_totals_merges_across_calls() {
+        let batch_a = vec![text_result(&[(TokenizerId::O200k, TokenCount::Exact(5))])];
+        let batch_b = vec![text_result(&[(TokenizerId::O200k, TokenCount::Exact(7))])];
+        let mut totals = BTreeMap::new();
+        accumulate_totals(&batch_a, &mut totals);
+        accumulate_totals(&batch_b, &mut totals);
+        assert_eq!(totals[&TokenizerId::O200k].hi(), 12);
+    }
+
+    #[test]
+    fn accumulate_totals_skips_non_text() {
+        let entries = vec![FileResult {
+            rel_path: "img.bin".into(),
+            kind: FileKind::Binary,
+            tokens: BTreeMap::new(),
+        }];
+        let mut totals = BTreeMap::new();
+        accumulate_totals(&entries, &mut totals);
+        assert!(totals.is_empty());
+    }
+
+    #[rstest]
+    #[case::empty(vec![], 0)]
+    #[case::picks_highest_exact(
+        vec![(TokenizerId::O200k, TokenCount::Exact(100)),
+             (TokenizerId::Ctoc, TokenCount::Exact(200))],
+        200
+    )]
+    #[case::uses_hi_for_approx(
+        vec![(TokenizerId::Ctoc, TokenCount::Approx { lo: 90, hi: 110 }),
+             (TokenizerId::O200k, TokenCount::Exact(100))],
+        110
+    )]
+    fn max_total_returns_expected(
+        #[case] entries: Vec<(TokenizerId, TokenCount)>,
+        #[case] expected: usize,
+    ) {
+        let totals: BTreeMap<TokenizerId, TokenCount> = entries.into_iter().collect();
+        assert_eq!(max_total(&totals), expected);
+    }
 }
