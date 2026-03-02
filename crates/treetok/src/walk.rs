@@ -157,6 +157,57 @@ fn walk_one(root: &Path, opts: &WalkOptions) -> WalkResult {
     }
 }
 
+/// Label used for stdin input in paths and display.
+pub const STDIN_LABEL: &str = "<stdin>";
+
+/// Read all of stdin and return a single-entry [`WalkResult`] with root
+/// [`STDIN_LABEL`].
+///
+/// Classification follows the same rules as file walking: UTF-8 validity and
+/// size check (>3 MB → `TooLarge`).  The read is capped at `MAX_FILE_SIZE + 1`
+/// bytes to avoid unbounded memory allocation.
+pub fn read_stdin() -> std::io::Result<WalkResult> {
+    use std::io::Read;
+
+    let mut buf = Vec::new();
+    std::io::stdin()
+        .lock()
+        .take(MAX_FILE_SIZE + 1)
+        .read_to_end(&mut buf)?;
+
+    let label = PathBuf::from(STDIN_LABEL);
+
+    let entry = if buf.len() as u64 > MAX_FILE_SIZE {
+        FileEntry {
+            path: label.clone(),
+            rel_path: label,
+            kind: FileKind::TooLarge,
+            content: None,
+        }
+    } else {
+        match String::from_utf8(buf) {
+            Ok(content) => FileEntry {
+                path: label.clone(),
+                rel_path: label,
+                kind: FileKind::Text,
+                content: Some(content),
+            },
+            Err(_) => FileEntry {
+                path: label.clone(),
+                rel_path: label,
+                kind: FileKind::Binary,
+                content: None,
+            },
+        }
+    };
+
+    Ok(WalkResult {
+        root: STDIN_LABEL.into(),
+        entries: vec![entry],
+        errors: vec![],
+    })
+}
+
 /// Maximum file size we will read (3 MB).
 const MAX_FILE_SIZE: u64 = 3 * 1024 * 1024;
 /// Number of bytes read for UTF-8 sniffing.
@@ -461,5 +512,12 @@ mod tests {
 
         assert!(results[0].errors.is_empty());
         assert_eq!(results[0].entries.len(), 1);
+    }
+
+    // ── STDIN_LABEL ──────────────────────────────────────────────────────
+
+    #[test]
+    fn stdin_label_is_angle_bracketed() {
+        assert_eq!(STDIN_LABEL, "<stdin>");
     }
 }
